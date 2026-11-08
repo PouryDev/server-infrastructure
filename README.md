@@ -1,7 +1,7 @@
 # server-infrastructure
 
 Shared infrastructure for every project on one server (4 cores, 8 GB RAM, 100 GB SSD), started with a
-single `docker compose up -d`. Other projects join the `infra` Docker network and use these services.
+single `make up` (`docker compose up -d`). Other projects join the `infra` Docker network and use these services.
 
 ```
  visitors ─▶ ArvanCloud CDN (TLS) ─▶ :80 nginx ─▶ project containers (own network alias, `infra` net)
@@ -32,9 +32,28 @@ not reservations. Budget: infra <= ~3.5 GB under load, leaving ~4 GB for project
 
 ## Makefile
 
-`make` lists every target. Anything that needs input (`make new-project`, `make ship`, `make logs`, `make firewall`, `make tunnel`, `make psql`, ...)
-asks one question at a time with an example in parentheses and the default in brackets, and shows what it will run before it does anything
-destructive. A value can be passed up front to skip its question: `make new-project NAME=shop CLIENT_DOMAIN=shop.example.com`.
+`make` lists every target. Targets marked *asks* prompt one question at a time, with an example in parentheses and the default in brackets,
+and show what they will run before doing anything destructive. A value can be passed up front to skip its question:
+`make new-project NAME=shop CLIENT_DOMAIN=shop.example.com`.
+
+| Target | What it does |
+|---|---|
+| `make init` | first-time setup: `.env` with random secrets, data directories (uses sudo) |
+| `make up` / `update` / `pull` | start or update the stack / pull images and recreate what changed / pull only |
+| `make down` *asks* | stop all shared services (confirms first) |
+| `make restart` *asks* | restart one service |
+| `make ps` / `status` | container health / health plus memory and CPU of each container |
+| `make logs` *asks* | follow logs of a service (or all) |
+| `make config` | validate `compose.yaml` with the current `.env` |
+| `make new-project` *asks* | provision DB, Redis, RabbitMQ, nginx blocks, probes and env file for a project |
+| `make ship` *asks* | build a project locally and deploy it to the server over SSH |
+| `make nginx-test` / `nginx-reload` | test / test and reload the nginx config |
+| `make update-arvan-ips` | refresh CDN ranges (real-IP config + firewall list) and reload nginx |
+| `make firewall` *asks* | CDN-only HTTP port: dry run / apply / remove |
+| `make prometheus-reload` | reload Prometheus config and rules |
+| `make dashboards` | regenerate the Grafana dashboards |
+| `make psql` *asks* / `redis-cli` | shell on the shared Postgres / Redis |
+| `make tunnel` *asks* | SSH tunnel to Grafana, Prometheus, Alertmanager, RabbitMQ and Postgres |
 
 ## First start (on the server)
 
@@ -49,8 +68,9 @@ make up         # then `make status`: everything should become healthy
 `CADVISOR_IMAGE` is separate because cAdvisor comes from a ghcr mirror. Grafana's generated admin password:
 `grep GRAFANA_ADMIN_PASSWORD .env`.
 
-Reaching the admin UIs (all bound to `127.0.0.1`): `ssh -L 3000:127.0.0.1:3000 -L 9093:127.0.0.1:9093 -L 15672:127.0.0.1:15672 server`
-(Grafana 3000, Alertmanager 9093, RabbitMQ 15672, Prometheus 9090, Postgres 5432).
+Reaching the admin UIs (all bound to `127.0.0.1` on the server): run `make tunnel` on your machine and open
+Grafana `localhost:3000`, Prometheus `localhost:9090`, Alertmanager `localhost:9093`, RabbitMQ `localhost:15672`
+(Postgres is on `localhost:5432`).
 
 ## Host preparation (once, as root)
 
@@ -63,14 +83,15 @@ sudo cp host/daemon.json /etc/docker/daemon.json   # MERGE if you already have o
 * **Swap**: add 1-2 GB swap (or zram) as a cushion: `fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`.
 * **ufw + node_exporter**: `ufw allow from 10.99.250.0/24 to 10.99.250.1 port 9100 proto tcp` (Prometheus scrapes the host's NIC stats through the monitoring bridge gateway).
 * **CDN-only HTTP** (important): the CDN hits the server IP directly, so anyone who finds the IP can bypass it, and ufw does not filter Docker-published ports.
-  `scripts/update-arvan-ips.sh` refreshes the CDN ranges; `scripts/firewall.sh` (dry run by default) generates the `DOCKER-USER` rules;
+  `make update-arvan-ips` refreshes the CDN ranges; `make firewall` shows the `DOCKER-USER` rules first (dry run) and applies them after confirmation;
   `host/infra-firewall.service` re-applies them on boot/Docker restart (edit the paths to your install dir).
 * The **real client IP** relies on the CDN appending to `X-Forwarded-For`. After the first real request, check the `remote_addr` in
-  `docker compose logs nginx` is the visitor's address, not an Arvan IP.
+  `make logs` (service `nginx`) is the visitor's address, not an Arvan IP.
 
 ## Adding a project
 
-On the server, from this repo, run `make new-project` and answer the questions. It is equivalent to:
+On the server, from this repo, run `make new-project` and answer the questions (name, client domain, API domain or path, container URLs).
+It is equivalent to:
 
 ```bash
 scripts/new-project.sh shop \
@@ -79,21 +100,22 @@ scripts/new-project.sh shop \
 ```
 
 Creates the Postgres role/db, Redis ACL user, RabbitMQ vhost/user, the nginx blocks (tested + reloaded), uptime probes and
-`/srv/apps/shop/.env` with every connection string. Then, from the developer machine, `scripts/ship.sh` builds locally and
-deploys over SSH with automatic rollback (`make ship` asks for the project path).
+`/srv/apps/shop/.env` with every connection string. Then, from the developer machine, `make ship` (asks for the project path) builds locally and
+deploys over SSH with automatic rollback. The project needs a `ship.conf` (format in the header of `scripts/ship.sh` and in `docs/project-integration/AGENTS.md`).
 
 **Give the project's developers/agents `docs/project-integration/AGENTS.md`** (copy it to the project root, or
 `docs/project-integration/skill/server-infra/` into the project's `.claude/skills/`). It contains the rules every project must follow.
 
 ## Monitoring and alerting
 
+* After editing alert rules or `prometheus.yml`: `make prometheus-reload`. Dashboards are provisioned from `config/grafana/dashboards/` (re-read every 60 s).
 * Grafana folder **Infrastructure**: Server, Containers, PostgreSQL, Redis & RabbitMQ, Edge & uptime, Applications (OTel RED metrics per service).
   Dashboards are generated by `scripts/gen-dashboards.py` (grafana.com is not reachable from every network, so nothing is downloaded).
 * Traces: Grafana -> Explore -> Tempo. Services appear by `service.name`.
 * 42 alert rules in `config/prometheus/rules/` (host CPU/RAM/swap/disk incl. fill prediction, OOM kills, containers, Postgres, Redis, RabbitMQ,
   nginx, external probes, pipeline health).
 * **Notifications are not wired yet**: pick a channel in `config/alertmanager/alertmanager.yml` (Telegram example is there) and
-  `docker compose restart alertmanager`. Until then alerts are only visible in Alertmanager/Grafana.
+  `make restart` (service `alertmanager`). Until then alerts are only visible in Alertmanager/Grafana.
 * **Dead-man switch**: the always-firing `Watchdog` alert is routed to the `watchdog` receiver. Point it at an external heartbeat service
   (healthchecks.io / UptimeRobot) so you are told when the server or the whole monitoring stack dies; local monitoring cannot report that.
 
@@ -131,7 +153,7 @@ Docker network (they can reach each other's containers by name; authentication i
 ```
 compose.yaml            all services, networks, limits
 config/                 per-service configuration (postgres, redis, rabbitmq, nginx, otel, tempo, prometheus + rules, alertmanager, grafana, blackbox, firewall)
-Makefile                shortcuts for everything below; interactive where input is needed
+Makefile                shortcuts for everything below; interactive where input is needed (`make help`)
 scripts/                init-host, new-project, ship, update-arvan-ips, firewall, gen-dashboards, lib-prompt (used by the Makefile)
 host/                   sysctl, THP, docker daemon.json, firewall unit
 docs/project-integration/   AGENTS.md + skill for the projects that deploy here
