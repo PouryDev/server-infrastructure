@@ -30,14 +30,19 @@ single `docker compose up -d`. Other projects join the `infra` Docker network an
 Caps add up to ~4.7 GB, but idle usage measured on a test run is only ~0.65 GB; the caps are ceilings,
 not reservations. Budget: infra <= ~3.5 GB under load, leaving ~4 GB for projects.
 
+## Makefile
+
+`make` lists every target. Anything that needs input (`make new-project`, `make ship`, `make logs`, `make firewall`, `make tunnel`, `make psql`, ...)
+asks one question at a time with an example in parentheses and the default in brackets, and shows what it will run before it does anything
+destructive. A value can be passed up front to skip its question: `make new-project NAME=shop CLIENT_DOMAIN=shop.example.com`.
+
 ## First start (on the server)
 
 ```bash
 git clone <this repo> /srv/infrastructure && cd /srv/infrastructure
-scripts/init-host.sh          # .env with random secrets, data dirs with the right owners (/srv/data)
-docker compose pull           # or load the images you pulled elsewhere; edit REGISTRY in .env if needed
-docker compose up -d
-docker compose ps             # everything should become healthy
+make init       # .env with random secrets, data dirs with the right owners (/srv/data)
+make pull       # or load the images you pulled elsewhere; edit REGISTRY in .env if needed
+make up         # then `make status`: everything should become healthy
 ```
 
 `.env.example` documents every variable. `REGISTRY` is the mirror prefix (default `docker.arvancloud.ir`);
@@ -65,7 +70,7 @@ sudo cp host/daemon.json /etc/docker/daemon.json   # MERGE if you already have o
 
 ## Adding a project
 
-On the server, from this repo:
+On the server, from this repo, run `make new-project` and answer the questions. It is equivalent to:
 
 ```bash
 scripts/new-project.sh shop \
@@ -75,7 +80,7 @@ scripts/new-project.sh shop \
 
 Creates the Postgres role/db, Redis ACL user, RabbitMQ vhost/user, the nginx blocks (tested + reloaded), uptime probes and
 `/srv/apps/shop/.env` with every connection string. Then, from the developer machine, `scripts/ship.sh` builds locally and
-deploys over SSH with automatic rollback.
+deploys over SSH with automatic rollback (`make ship` asks for the project path).
 
 **Give the project's developers/agents `docs/project-integration/AGENTS.md`** (copy it to the project root, or
 `docs/project-integration/skill/server-infra/` into the project's `.claude/skills/`). It contains the rules every project must follow.
@@ -126,7 +131,8 @@ Docker network (they can reach each other's containers by name; authentication i
 ```
 compose.yaml            all services, networks, limits
 config/                 per-service configuration (postgres, redis, rabbitmq, nginx, otel, tempo, prometheus + rules, alertmanager, grafana, blackbox, firewall)
-scripts/                init-host, new-project, ship, update-arvan-ips, firewall, gen-dashboards
+Makefile                shortcuts for everything below; interactive where input is needed
+scripts/                init-host, new-project, ship, update-arvan-ips, firewall, gen-dashboards, lib-prompt (used by the Makefile)
 host/                   sysctl, THP, docker daemon.json, firewall unit
 docs/project-integration/   AGENTS.md + skill for the projects that deploy here
 ```
