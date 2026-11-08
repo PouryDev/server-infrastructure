@@ -5,7 +5,8 @@
 # Run from a project's repository root. Needs a ship.conf there (bash syntax):
 #
 #   APP=myapp                               # same name used with scripts/new-project.sh
-#   SSH_HOST=deploy@my-server               # anything `ssh` accepts
+#   SSH_HOST=deploy@my-server               # anything `ssh` accepts; "local" = deploy on this same machine
+#                                           #   (infra running locally: no ssh/copy, REMOTE_DIR must be set)
 #   COMPOSE_FILE=deploy/compose.yaml        # copied to the server as $REMOTE_DIR/compose.yaml
 #   IMAGES=("api=./backend" "web=./client:./client/Dockerfile.prod")   # service=context[:dockerfile]
 #   # optional: REMOTE_DIR=/srv/apps/$APP  PLATFORM=linux/amd64  KEEP_TAGS=3  BUILD_ARGS=("--build-arg" "X=y")
@@ -33,7 +34,16 @@ TAG="$(git rev-parse --short=10 HEAD)"
 if [ -n "$(git status --porcelain)" ]; then TAG="$TAG-dirty$(date +%s)"; echo "warning: uncommitted changes, tagging $TAG"; fi
 BUILD=1; [ "${1:-}" = "--no-build" ] && BUILD=0
 
-SSH=(ssh -o BatchMode=yes -o ServerAliveInterval=30 "$SSH_HOST")
+LOCAL=0; [ "$SSH_HOST" = local ] && LOCAL=1
+[ "$LOCAL" -eq 0 ] || grep -q '^REMOTE_DIR=' "$CONF" \
+  || { echo "SSH_HOST=local needs REMOTE_DIR in ship.conf (use APPS_DIR/<app> from the infra .env)" >&2; exit 1; }
+
+remote() { # remote <shell command>
+  if [ "$LOCAL" -eq 1 ]; then bash -c "$1"; else ssh -o BatchMode=yes -o ServerAliveInterval=30 "$SSH_HOST" "$1"; fi
+}
+remote_script() { # remote_script <args...>; the script comes on stdin
+  if [ "$LOCAL" -eq 1 ]; then bash -s -- "$@"; else ssh -o BatchMode=yes -o ServerAliveInterval=30 "$SSH_HOST" bash -s -- "$@"; fi
+}
 
 for spec in "${IMAGES[@]}"; do
   svc="${spec%%=*}"; rest="${spec#*=}"; ctx="${rest%%:*}"; dockerfile=""
@@ -43,16 +53,18 @@ for spec in "${IMAGES[@]}"; do
     echo "==> build $img ($PLATFORM)"
     docker build --platform "$PLATFORM" ${dockerfile:+-f "$dockerfile"} "${BUILD_ARGS[@]}" -t "$img" "$ctx"
   fi
-  echo "==> ship $img"
-  docker save "$img" | gzip -3 | "${SSH[@]}" 'gunzip | docker load' >/dev/null
+  if [ "$LOCAL" -eq 0 ]; then
+    echo "==> ship $img"
+    docker save "$img" | gzip -3 | remote 'gunzip | docker load' >/dev/null
+  fi
 done
 
-echo "==> deploy $APP:$TAG on $SSH_HOST"
-"${SSH[@]}" "mkdir -p '$REMOTE_DIR'"
-scp -q "$COMPOSE_FILE" "$SSH_HOST:$REMOTE_DIR/compose.yaml"
+echo "==> deploy $APP:$TAG on $([ "$LOCAL" -eq 1 ] && echo "this machine" || echo "$SSH_HOST")"
+remote "mkdir -p '$REMOTE_DIR'"
+if [ "$LOCAL" -eq 1 ]; then cp "$COMPOSE_FILE" "$REMOTE_DIR/compose.yaml"; else scp -q "$COMPOSE_FILE" "$SSH_HOST:$REMOTE_DIR/compose.yaml"; fi
 
 # Runs on the server. Deploys $TAG; on failure restores the previous tag.
-"${SSH[@]}" bash -s -- "$APP" "$REMOTE_DIR" "$TAG" "$KEEP_TAGS" "$WAIT_TIMEOUT" <<'REMOTE'
+remote_script "$APP" "$REMOTE_DIR" "$TAG" "$KEEP_TAGS" "$WAIT_TIMEOUT" <<'REMOTE'
 set -uo pipefail
 APP="$1"; DIR="$2"; TAG="$3"; KEEP="$4"; WAIT="$5"
 cd "$DIR"

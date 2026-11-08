@@ -4,7 +4,7 @@
 #   make new-project NAME=shop CLIENT_DOMAIN=shop.example.com
 
 SHELL := bash
-.SHELLFLAGS := -eu -o pipefail -c
+.SHELLFLAGS := -e -o pipefail -c
 .ONESHELL:
 .DEFAULT_GOAL := help
 

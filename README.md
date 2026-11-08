@@ -72,6 +72,13 @@ Reaching the admin UIs (all bound to `127.0.0.1` on the server): run `make tunne
 Grafana `localhost:3000`, Prometheus `localhost:9090`, Alertmanager `localhost:9093`, RabbitMQ `localhost:15672`
 (Postgres is on `localhost:5432`).
 
+## Running it on a development machine
+
+Same stack, no root needed: `INFRA_DATA_DIR=$HOME/infra-local/data INFRA_APPS_DIR=$HOME/infra-local/apps make init`, then set a free
+`PROMETHEUS_PORT` etc. in `.env` if a default port is taken, and `make up`. `scripts/init-host.sh` falls back to a throw-away container for
+`chown` when there is no passwordless sudo. Projects deploy to it with `SSH_HOST=local` in their `ship.conf` (no SSH, same build/rollback flow).
+To start a new project, see `docs/project-integration/new-project-prompt.md` (preparation steps + a ready-to-paste prompt).
+
 ## Host preparation (once, as root)
 
 ```bash
@@ -103,8 +110,9 @@ Creates the Postgres role/db, Redis ACL user, RabbitMQ vhost/user, the nginx blo
 `/srv/apps/shop/.env` with every connection string. Then, from the developer machine, `make ship` (asks for the project path) builds locally and
 deploys over SSH with automatic rollback. The project needs a `ship.conf` (format in the header of `scripts/ship.sh` and in `docs/project-integration/AGENTS.md`).
 
-**Give the project's developers/agents `docs/project-integration/AGENTS.md`** (copy it to the project root, or
-`docs/project-integration/skill/server-infra/` into the project's `.claude/skills/`). It contains the rules every project must follow.
+**Give the project's developers (and any assistant working on it) `docs/project-integration/AGENTS.md`**: copy it to the project root. It describes only how a
+project connects to this infrastructure, not how to build the project. `docs/project-integration/skill/server-infra/` is the same content packaged as an
+installable skill, for tooling that supports skills.
 
 ## Monitoring and alerting
 

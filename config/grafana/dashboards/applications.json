@@ -276,7 +276,7 @@
   {
    "id": 7,
    "type": "row",
-   "title": "Go runtime (otel-go runtime instrumentation, if enabled)",
+   "title": "Telemetry pipeline",
    "collapsed": false,
    "gridPos": {
     "x": 0,
@@ -289,163 +289,6 @@
   {
    "id": 8,
    "type": "timeseries",
-   "title": "Goroutines",
-   "description": "",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "prometheus"
-   },
-   "gridPos": {
-    "x": 0,
-    "y": 16,
-    "w": 8,
-    "h": 7
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "prometheus"
-     },
-     "expr": "sum by (job) (go_goroutine_count)",
-     "legendFormat": "{{job}}"
-    }
-   ],
-   "fieldConfig": {
-    "defaults": {
-     "unit": "short",
-     "custom": {
-      "fillOpacity": 8,
-      "lineWidth": 1,
-      "showPoints": "never"
-     }
-    },
-    "overrides": []
-   },
-   "options": {
-    "legend": {
-     "displayMode": "list",
-     "placement": "bottom"
-    },
-    "tooltip": {
-     "mode": "multi",
-     "sort": "desc"
-    }
-   }
-  },
-  {
-   "id": 9,
-   "type": "timeseries",
-   "title": "Heap in use",
-   "description": "",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "prometheus"
-   },
-   "gridPos": {
-    "x": 8,
-    "y": 16,
-    "w": 8,
-    "h": 7
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "prometheus"
-     },
-     "expr": "sum by (job) (go_memory_used_bytes)",
-     "legendFormat": "{{job}}"
-    }
-   ],
-   "fieldConfig": {
-    "defaults": {
-     "unit": "bytes",
-     "custom": {
-      "fillOpacity": 8,
-      "lineWidth": 1,
-      "showPoints": "never"
-     }
-    },
-    "overrides": []
-   },
-   "options": {
-    "legend": {
-     "displayMode": "list",
-     "placement": "bottom"
-    },
-    "tooltip": {
-     "mode": "multi",
-     "sort": "desc"
-    }
-   }
-  },
-  {
-   "id": 10,
-   "type": "timeseries",
-   "title": "Allocation rate",
-   "description": "Empty unless the service enables runtime metrics.",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "prometheus"
-   },
-   "gridPos": {
-    "x": 16,
-    "y": 16,
-    "w": 8,
-    "h": 7
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "prometheus"
-     },
-     "expr": "sum by (job) (rate(go_memory_allocated_bytes_total[5m]))",
-     "legendFormat": "{{job}}"
-    }
-   ],
-   "fieldConfig": {
-    "defaults": {
-     "unit": "Bps",
-     "custom": {
-      "fillOpacity": 8,
-      "lineWidth": 1,
-      "showPoints": "never"
-     }
-    },
-    "overrides": []
-   },
-   "options": {
-    "legend": {
-     "displayMode": "list",
-     "placement": "bottom"
-    },
-    "tooltip": {
-     "mode": "multi",
-     "sort": "desc"
-    }
-   }
-  },
-  {
-   "id": 11,
-   "type": "row",
-   "title": "Telemetry pipeline",
-   "collapsed": false,
-   "gridPos": {
-    "x": 0,
-    "y": 23,
-    "w": 24,
-    "h": 1
-   },
-   "panels": []
-  },
-  {
-   "id": 12,
-   "type": "timeseries",
    "title": "Spans accepted / sent / refused",
    "description": "",
    "datasource": {
@@ -454,7 +297,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 24,
+    "y": 16,
     "w": 8,
     "h": 7
    },
@@ -510,7 +353,7 @@
    }
   },
   {
-   "id": 13,
+   "id": 9,
    "type": "timeseries",
    "title": "Metric points accepted / refused",
    "description": "",
@@ -520,7 +363,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 24,
+    "y": 16,
     "w": 8,
     "h": 7
    },
@@ -567,7 +410,7 @@
    }
   },
   {
-   "id": 14,
+   "id": 10,
    "type": "timeseries",
    "title": "Collector & Tempo memory",
    "description": "",
@@ -577,7 +420,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 24,
+    "y": 16,
     "w": 8,
     "h": 7
    },

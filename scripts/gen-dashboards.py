@@ -216,10 +216,6 @@ b.ts("5xx error ratio by service", [('sum by (job) (rate(http_server_request_dur
 b.ts("Latency p95 by service", [("histogram_quantile(0.95, sum by (job, le) (rate(http_server_request_duration_seconds_bucket[5m])))", "{{job}}")], "s", w=8)
 b.ts("Latency p99 by service", [("histogram_quantile(0.99, sum by (job, le) (rate(http_server_request_duration_seconds_bucket[5m])))", "{{job}}")], "s", w=12)
 b.ts("Requests by status code", [("sum by (http_response_status_code) (rate(http_server_request_duration_seconds_count[5m]))", "{{http_response_status_code}}")], "reqps", w=12, stack=True)
-b.row("Go runtime (otel-go runtime instrumentation, if enabled)")
-b.ts("Goroutines", [("sum by (job) (go_goroutine_count)", "{{job}}")], w=8)
-b.ts("Heap in use", [("sum by (job) (go_memory_used_bytes)", "{{job}}")], "bytes", w=8)
-b.ts("Allocation rate", [("sum by (job) (rate(go_memory_allocated_bytes_total[5m]))", "{{job}}")], "Bps", w=8, desc="Empty unless the service enables runtime metrics.")
 b.row("Telemetry pipeline")
 b.ts("Spans accepted / sent / refused", [("sum(rate(otelcol_receiver_accepted_spans[5m]))", "accepted"), ("sum(rate(otelcol_exporter_sent_spans[5m]))", "sent to Tempo (after sampling)"),
                                          ("sum(rate(otelcol_receiver_refused_spans[5m]))", "refused (memory limiter)")], w=8)

@@ -95,8 +95,11 @@ ENV
 # Persistent data (uploads, ...) for the project lives outside the container.
 DATA_APP="$DATA_DIR/apps/$NAME"
 if mkdir -p "$DATA_APP" 2>/dev/null; then
+  # Project containers run as uid 65532. Falls back to a throw-away container when
+  # there is no root/sudo (developer machine).
   chown 65532:65532 "$DATA_APP" 2>/dev/null || sudo -n chown 65532:65532 "$DATA_APP" 2>/dev/null \
-    || echo "   note: run  sudo chown 65532:65532 $DATA_APP  (uid of distroless 'nonroot')"
+    || docker run --rm -v "$DATA_APP:/t" "${HELPER_IMAGE:-alpine:3.20}" chown 65532:65532 /t 2>/dev/null \
+    || echo "   note: run  sudo chown 65532:65532 $DATA_APP"
 else
   echo "   note: create $DATA_APP yourself: sudo mkdir -p $DATA_APP && sudo chown 65532:65532 $DATA_APP"
 fi
