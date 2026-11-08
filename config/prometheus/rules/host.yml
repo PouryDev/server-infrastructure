@@ -1,0 +1,131 @@
+groups:
+  - name: meta
+    rules:
+      - alert: Watchdog
+        expr: vector(1)
+        labels: { severity: none }
+        annotations:
+          summary: Always firing. If an external heartbeat stops receiving it, monitoring (or the server) is down.
+
+      - alert: TargetDown
+        expr: up == 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }} / {{ $labels.instance }} is not being scraped"
+
+  - name: host
+    rules:
+      - alert: HostHighCPU
+        expr: 100 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100 > 85
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "CPU above 85% for 15m ({{ $value | printf \"%.0f\" }}%)"
+
+      - alert: HostHighLoad
+        expr: node_load5 / scalar(count(node_cpu_seconds_total{mode="idle"})) > 1.5
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "5m load is {{ $value | printf \"%.1f\" }}x the core count"
+
+      - alert: HostMemoryLow
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Less than 10% memory available ({{ $value | humanizePercentage }})"
+
+      - alert: HostMemoryCritical
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.05
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Less than 5% memory available - OOM kills are imminent"
+
+      - alert: HostSwapHigh
+        expr: node_memory_SwapTotal_bytes > 0 and (1 - node_memory_SwapFree_bytes / node_memory_SwapTotal_bytes) > 0.5
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Swap more than 50% used"
+
+      - alert: HostOOMKill
+        expr: increase(node_vmstat_oom_kill[5m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "The kernel OOM killer fired on the host"
+
+      - alert: DiskSpaceLow
+        expr: |
+          node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"}
+            / node_filesystem_size_bytes < 0.20
+          and node_filesystem_readonly == 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.mountpoint }} has {{ $value | humanizePercentage }} free"
+
+      - alert: DiskSpaceCritical
+        expr: |
+          node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"}
+            / node_filesystem_size_bytes < 0.10
+          and node_filesystem_readonly == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.mountpoint }} has only {{ $value | humanizePercentage }} free"
+
+      - alert: DiskWillFillIn24h
+        expr: |
+          predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"}[6h], 24 * 3600) < 0
+          and node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"}
+            / node_filesystem_size_bytes < 0.40
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.mountpoint }} is projected to run out of space within 24h"
+
+      - alert: InodesLow
+        expr: |
+          node_filesystem_files_free{fstype!~"tmpfs|overlay|squashfs|ramfs"}
+            / node_filesystem_files < 0.10
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.mountpoint }} is running out of inodes"
+
+      - alert: DiskIOSaturated
+        expr: rate(node_disk_io_time_seconds_total[5m]) > 0.9
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Disk {{ $labels.device }} is busy more than 90% of the time"
+
+      - alert: ConntrackNearLimit
+        expr: node_nf_conntrack_entries / node_nf_conntrack_entries_limit > 0.8
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "conntrack table is {{ $value | humanizePercentage }} full"
+
+      - alert: FileDescriptorsNearLimit
+        expr: node_filefd_allocated / node_filefd_maximum > 0.8
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "System file descriptors above 80%"
+
+      - alert: ClockSkew
+        expr: abs(node_timex_offset_seconds) > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "System clock is off by {{ $value | printf \"%.3f\" }}s"
+
+      - alert: HostRebooted
+        expr: time() - node_boot_time_seconds < 600
+        labels: { severity: info }
+        annotations:
+          summary: "The server rebooted in the last 10 minutes"

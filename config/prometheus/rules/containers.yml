@@ -1,0 +1,39 @@
+groups:
+  - name: containers
+    rules:
+      - alert: ContainerOOMKilled
+        expr: increase(container_oom_events_total{name!=""}[5m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.name }} was OOM-killed (hit its memory limit)"
+
+      - alert: ContainerRestartLoop
+        expr: changes(container_start_time_seconds{name!=""}[15m]) > 2
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.name }} restarted {{ $value }} times in 15m"
+
+      - alert: ContainerMemoryNearLimit
+        expr: |
+          container_memory_working_set_bytes{name!=""}
+            / (container_spec_memory_limit_bytes{name!=""} > 0) > 0.90
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.name }} is using {{ $value | humanizePercentage }} of its memory limit"
+
+      - alert: ContainerCPUThrottled
+        expr: |
+          rate(container_cpu_cfs_throttled_periods_total{name!=""}[5m])
+            / rate(container_cpu_cfs_periods_total{name!=""}[5m]) > 0.5
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.name }} is CPU-throttled in over half of its periods"
+
+      - alert: ContainerNoLimit
+        expr: container_spec_memory_limit_bytes{name!=""} == 0
+        for: 30m
+        labels: { severity: info }
+        annotations:
+          summary: "{{ $labels.name }} runs without a memory limit (one leak can OOM the whole server)"

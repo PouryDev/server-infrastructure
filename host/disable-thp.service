@@ -1,0 +1,14 @@
+# Transparent Huge Pages cause latency spikes for Redis and PostgreSQL.
+# Install: sudo cp host/disable-thp.service /etc/systemd/system/ && sudo systemctl enable --now disable-thp
+[Unit]
+Description=Disable Transparent Huge Pages
+DefaultDependencies=no
+After=sysinit.target local-fs.target
+Before=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo never > /sys/kernel/mm/transparent_hugepage/enabled; echo never > /sys/kernel/mm/transparent_hugepage/defrag'
+
+[Install]
+WantedBy=basic.target

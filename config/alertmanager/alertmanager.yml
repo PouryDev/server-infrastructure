@@ -1,0 +1,36 @@
+# No notification channel is configured yet: alerts are visible in the Alertmanager UI
+# (127.0.0.1:9093) and in Grafana, but nothing is sent. To get notified, add a receiver below
+# (Telegram example is ready) and restart:  docker compose restart alertmanager
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default
+  group_by: [alertname, instance, name]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # Always-firing alert. Point "watchdog" at an external heartbeat service (healthchecks.io,
+    # UptimeRobot heartbeat) so you are told when the whole server / monitoring stack is dead.
+    - matchers: [alertname="Watchdog"]
+      receiver: watchdog
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 5m
+
+receivers:
+  - name: default
+    # telegram_configs:
+    #   - bot_token_file: /etc/alertmanager/secrets/telegram_token
+    #     chat_id: 123456789
+    #     parse_mode: HTML
+  - name: watchdog
+    # webhook_configs:
+    #   - url: https://hc-ping.com/<uuid>
+    #     send_resolved: false
+
+inhibit_rules:
+  - source_matchers: [severity="critical"]
+    target_matchers: [severity="warning"]
+    equal: [alertname, instance]

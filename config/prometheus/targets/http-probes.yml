@@ -1,0 +1,5 @@
+# Public URLs probed from this server (goes out through the CDN, so it checks what users see).
+# scripts/new-project.sh appends entries here. Format:
+# - targets: ["https://app.example.com/"]
+#   labels: { project: myapp }
+[]

@@ -1,0 +1,19 @@
+# Re-applies the CDN-only rule for the HTTP port after Docker (re)starts and on boot.
+# Install (adjust the path to where this repo lives on the server):
+#   sudo cp host/infra-firewall.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now infra-firewall
+[Unit]
+Description=Restrict published HTTP port to the CDN (DOCKER-USER chain)
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/srv/infrastructure
+ExecStart=/srv/infrastructure/scripts/firewall.sh --apply
+ExecStop=/srv/infrastructure/scripts/firewall.sh --remove
+
+[Install]
+WantedBy=multi-user.target docker.service

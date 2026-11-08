@@ -1,0 +1,148 @@
+groups:
+  - name: postgres
+    rules:
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "PostgreSQL is not reachable"
+
+      - alert: PostgresConnectionsHigh
+        expr: sum(pg_stat_activity_count) / max(pg_settings_max_connections) > 0.8
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Postgres connections at {{ $value | humanizePercentage }} of max_connections"
+
+      - alert: PostgresLongTransaction
+        expr: max(pg_stat_activity_max_tx_duration{state!="idle"}) > 300
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "A transaction has been open for over 5 minutes"
+
+      - alert: PostgresDeadlocks
+        expr: sum(increase(pg_stat_database_deadlocks[10m])) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Deadlocks detected"
+
+      - alert: PostgresCacheHitLow
+        expr: |
+          sum(rate(pg_stat_database_blks_hit[15m]))
+            / (sum(rate(pg_stat_database_blks_hit[15m])) + sum(rate(pg_stat_database_blks_read[15m]))) < 0.90
+        for: 30m
+        labels: { severity: info }
+        annotations:
+          summary: "Buffer cache hit ratio below 90% - consider more shared_buffers or better indexes"
+
+  - name: redis
+    rules:
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Redis is not reachable"
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / (redis_memory_max_bytes > 0) > 0.90
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Redis is at {{ $value | humanizePercentage }} of maxmemory"
+
+      - alert: RedisRejectedConnections
+        expr: increase(redis_rejected_connections_total[5m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Redis is rejecting connections (maxclients reached)"
+
+      - alert: RedisEvictingKeys
+        expr: increase(redis_evicted_keys_total[10m]) > 100
+        labels: { severity: info }
+        annotations:
+          summary: "Redis evicted {{ $value }} keys in 10m - memory is too small for the cache load"
+
+  - name: rabbitmq
+    rules:
+      - alert: RabbitMQMemoryAlarm
+        expr: rabbitmq_alarms_memory_used_watermark == 1
+        labels: { severity: critical }
+        annotations:
+          summary: "RabbitMQ hit its memory watermark - publishers are blocked"
+
+      - alert: RabbitMQDiskAlarm
+        expr: rabbitmq_alarms_free_disk_space_watermark == 1
+        labels: { severity: critical }
+        annotations:
+          summary: "RabbitMQ is below disk_free_limit - publishers are blocked"
+
+      - alert: RabbitMQBacklog
+        expr: sum(rabbitmq_queue_messages_ready) > 10000
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} messages waiting in queues for 10m - consumers are down or too slow"
+
+      - alert: RabbitMQUnackedHigh
+        expr: sum(rabbitmq_queue_messages_unacked) > 5000
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} unacknowledged messages"
+
+  - name: edge
+    rules:
+      - alert: NginxDown
+        expr: nginx_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "nginx status endpoint is not responding"
+
+      - alert: NginxConnectionsHigh
+        expr: nginx_connections_active > 3000
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} active nginx connections"
+
+      - alert: EndpointDown
+        expr: probe_success == 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.instance }} fails external probes"
+
+      - alert: EndpointSlow
+        expr: probe_duration_seconds > 3
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} takes {{ $value | printf \"%.1f\" }}s to answer"
+
+  - name: observability
+    rules:
+      - alert: PrometheusNotifyingAlertmanagerFailed
+        expr: prometheus_notifications_alertmanagers_discovered < 1
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Prometheus cannot see Alertmanager - alerts are not being delivered"
+
+      - alert: PrometheusRuleEvaluationFailures
+        expr: increase(prometheus_rule_evaluation_failures_total[10m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Some alert rules fail to evaluate"
+
+      - alert: OtelCollectorDropping
+        expr: |
+          sum(rate(otelcol_exporter_send_failed_spans[5m])) > 0
+          or sum(rate(otelcol_receiver_refused_spans[5m])) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "OTel collector is failing to export or refusing spans (memory limiter?)"

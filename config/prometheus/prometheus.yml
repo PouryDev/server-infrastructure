@@ -1,0 +1,71 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs: [{ targets: ["localhost:9090"] }]
+
+  # node_exporter runs on the host network, bound to the monitoring bridge gateway.
+  # If ufw is active: ufw allow from 10.99.250.0/24 to 10.99.250.1 port 9100 proto tcp
+  - job_name: node
+    static_configs:
+      - targets: ["10.99.250.1:9100"]
+        labels: { instance: server }
+
+  - job_name: cadvisor
+    static_configs: [{ targets: ["cadvisor:8080"] }]
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: container_(tasks_state|memory_failures_total|fs_inodes_total|fs_inodes_free|network_(receive|transmit)_packets_dropped_total)
+        action: drop
+
+  - job_name: postgres
+    static_configs: [{ targets: ["postgres-exporter:9187"] }]
+
+  - job_name: redis
+    static_configs: [{ targets: ["redis-exporter:9121"] }]
+
+  - job_name: rabbitmq
+    static_configs: [{ targets: ["rabbitmq:15692"] }]
+
+  - job_name: nginx
+    static_configs: [{ targets: ["nginx-exporter:9113"] }]
+
+  - job_name: otel-collector
+    static_configs: [{ targets: ["otel-collector:8888"] }]
+
+  - job_name: tempo
+    static_configs: [{ targets: ["tempo:3200"] }]
+
+  - job_name: grafana
+    static_configs: [{ targets: ["grafana:3000"] }]
+
+  - job_name: alertmanager
+    static_configs: [{ targets: ["alertmanager:9093"] }]
+
+  - job_name: blackbox
+    static_configs: [{ targets: ["blackbox:9115"] }]
+
+  # External uptime probes. Targets live in targets/http-probes.yml (new-project.sh appends to it;
+  # Prometheus picks changes up automatically).
+  - job_name: blackbox-http
+    metrics_path: /probe
+    params: { module: [http_2xx] }
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/*.yml"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
