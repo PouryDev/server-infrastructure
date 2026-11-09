@@ -1,0 +1,216 @@
+package account
+
+import (
+	"context"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"<% .KitModule %>/apperr"
+	kitauth "<% .KitModule %>/auth"
+	"<% .KitModule %>/query"
+
+	"<% .Module %>/internal/domain/user"
+)
+
+// memRepo is an in-memory user.Repository.
+type memRepo struct {
+	mu    sync.Mutex
+	users map[uuid.UUID]user.User
+}
+
+func newRepo() *memRepo { return &memRepo{users: map[uuid.UUID]user.User{}} }
+
+func (r *memRepo) Create(_ context.Context, u user.User) (user.User, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.users {
+		if e.Email == u.Email {
+			return user.User{}, apperr.New(apperr.KindConflict, "email_taken", "email already registered")
+		}
+	}
+	u.ID, u.CreatedAt, u.UpdatedAt = uuid.New(), time.Now(), time.Now()
+	r.users[u.ID] = u
+	return u, nil
+}
+
+func (r *memRepo) GetByID(_ context.Context, id uuid.UUID) (user.User, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if u, ok := r.users[id]; ok {
+		return u, nil
+	}
+	return user.User{}, apperr.NotFound("user")
+}
+
+func (r *memRepo) GetByEmail(_ context.Context, email string) (user.User, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, u := range r.users {
+		if u.Email == email {
+			return u, nil
+		}
+	}
+	return user.User{}, apperr.NotFound("user")
+}
+
+func (r *memRepo) UpdatePasswordHash(_ context.Context, id uuid.UUID, hash string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	u := r.users[id]
+	u.PasswordHash = hash
+	r.users[id] = u
+	return nil
+}
+
+func (r *memRepo) List(context.Context, query.Params) (query.Page[user.User], error) {
+	return query.Page[user.User]{}, nil
+}
+
+func newService(t *testing.T, repo user.Repository, hasher kitauth.PasswordHasher) *Service {
+	t.Helper()
+	keys, err := kitauth.KeyConfig{Secret: strings.Repeat("k", 32)}.KeySet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwt, err := kitauth.NewJWT(kitauth.JWTConfig{Issuer: "t", Audience: "t"}, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(repo, hasher, jwt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func fastHasher() *kitauth.Argon2id {
+	return &kitauth.Argon2id{MemoryKiB: 64, Iterations: 1, Parallelism: 1, SaltLen: 16, KeyLen: 32}
+}
+
+func TestRegisterAndLogin(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t, newRepo(), fastHasher())
+
+	sess, err := s.Register(ctx, RegisterInput{Email: " Ada@Example.com ", Password: "correct horse battery", Name: "Ada"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.User.Email != "ada@example.com" || sess.User.Role != user.RoleUser || sess.Tokens.AccessToken == "" {
+		t.Fatalf("%+v", sess)
+	}
+
+	if _, err := s.Login(ctx, LoginInput{Email: "ADA@example.com", Password: "correct horse battery"}); err != nil {
+		t.Fatal(err)
+	}
+	for name, in := range map[string]LoginInput{
+		"wrong password": {Email: "ada@example.com", Password: "wrong password!!"},
+		"unknown email":  {Email: "nobody@example.com", Password: "correct horse battery"},
+	} {
+		_, err := s.Login(ctx, in)
+		if !apperr.Is(err, apperr.KindUnauthorized) || !strings.Contains(err.Error(), "invalid email or password") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestRegisterValidationAndDuplicate(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t, newRepo(), fastHasher())
+
+	_, err := s.Register(ctx, RegisterInput{Email: "not-an-email", Password: "short", Name: ""})
+	e, ok := apperr.As(err)
+	if !ok || e.Kind != apperr.KindInvalid || len(e.Fields) != 3 {
+		t.Fatalf("%v", err)
+	}
+
+	in := RegisterInput{Email: "a@b.co", Password: "long enough pw", Name: "A"}
+	if _, err := s.Register(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Register(ctx, in); !apperr.Is(err, apperr.KindConflict) {
+		t.Fatalf("duplicate: %v", err)
+	}
+}
+
+func TestRefresh(t *testing.T) {
+	ctx := context.Background()
+	repo := newRepo()
+	s := newService(t, repo, fastHasher())
+	sess, _ := s.Register(ctx, RegisterInput{Email: "a@b.co", Password: "long enough pw", Name: "A"})
+
+	next, err := s.Refresh(ctx, sess.Tokens.RefreshToken)
+	if err != nil || next.Tokens.AccessToken == "" {
+		t.Fatalf("%v", err)
+	}
+	if _, err := s.Refresh(ctx, sess.Tokens.AccessToken); !apperr.Is(err, apperr.KindUnauthorized) {
+		t.Fatalf("an access token must not refresh: %v", err)
+	}
+
+	delete(repo.users, sess.User.ID) // account removed
+	if _, err := s.Refresh(ctx, sess.Tokens.RefreshToken); !apperr.Is(err, apperr.KindUnauthorized) {
+		t.Fatalf("deleted account: %v", err)
+	}
+}
+
+func TestLoginUpgradesWeakHash(t *testing.T) {
+	ctx := context.Background()
+	repo := newRepo()
+	weak := fastHasher()
+	if _, err := newService(t, repo, weak).Register(ctx, RegisterInput{Email: "a@b.co", Password: "long enough pw", Name: "A"}); err != nil {
+		t.Fatal(err)
+	}
+	strong := &kitauth.Argon2id{MemoryKiB: 128, Iterations: 2, Parallelism: 1, SaltLen: 16, KeyLen: 32}
+	if _, err := newService(t, repo, strong).Login(ctx, LoginInput{Email: "a@b.co", Password: "long enough pw"}); err != nil {
+		t.Fatal(err)
+	}
+	u, _ := repo.GetByEmail(ctx, "a@b.co")
+	if !strings.Contains(u.PasswordHash, "m=128,t=2") {
+		t.Fatalf("hash not upgraded: %s", u.PasswordHash)
+	}
+}
+
+// memRevoker records revoked token ids in memory.
+type memRevoker struct {
+	ids  map[string]bool
+	subs map[string]bool
+}
+
+func (m *memRevoker) Revoke(_ context.Context, c *kitauth.Claims) error { m.ids[c.ID] = true; return nil }
+func (m *memRevoker) RevokeSubject(_ context.Context, sub string) error { m.subs[sub] = true; return nil }
+
+func TestLogout(t *testing.T) {
+	ctx := context.Background()
+	rev := &memRevoker{ids: map[string]bool{}, subs: map[string]bool{}}
+	keys, _ := kitauth.KeyConfig{Secret: strings.Repeat("k", 32)}.KeySet()
+	jwt, _ := kitauth.NewJWT(kitauth.JWTConfig{Issuer: "t", Audience: "t"}, keys)
+	s, err := New(newRepo(), fastHasher(), jwt, WithRevoker(rev))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, _ := s.Register(ctx, RegisterInput{Email: "a@b.co", Password: "long enough pw", Name: "A"})
+	other, _ := s.Register(ctx, RegisterInput{Email: "c@d.co", Password: "long enough pw", Name: "C"})
+	access, _ := jwt.Verify(ctx, sess.Tokens.AccessToken, kitauth.TypeAccess)
+	refresh, _ := jwt.Verify(ctx, sess.Tokens.RefreshToken, kitauth.TypeRefresh)
+
+	if err := s.Logout(ctx, access, LogoutInput{RefreshToken: sess.Tokens.RefreshToken}); err != nil {
+		t.Fatal(err)
+	}
+	if !rev.ids[access.ID] || !rev.ids[refresh.ID] {
+		t.Fatalf("both tokens must be revoked: %v", rev.ids)
+	}
+	if err := s.Logout(ctx, access, LogoutInput{RefreshToken: other.Tokens.RefreshToken}); !apperr.Is(err, apperr.KindForbidden) {
+		t.Fatalf("someone else's refresh token: %v", err)
+	}
+	if err := s.Logout(ctx, access, LogoutInput{Everywhere: true}); err != nil || !rev.subs[access.Subject] {
+		t.Fatalf("everywhere: %v %v", err, rev.subs)
+	}
+
+	noRevoker := newService(t, newRepo(), fastHasher())
+	if err := noRevoker.Logout(ctx, access, LogoutInput{}); !apperr.Is(err, apperr.KindUnavailable) {
+		t.Fatalf("without a revoker logout must say so: %v", err)
+	}
+}

@@ -1,0 +1,69 @@
+// Package httpapi is the HTTP delivery adapter: it translates requests into use-case calls and results
+// into JSON. It holds no business rules; errors come back classified (apperr) and the kit's httpx
+// turns them into status codes.
+package httpapi
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+
+	kitauth "<% .KitModule %>/auth"
+	"<% .KitModule %>/httpx"
+	"<% .KitModule %>/query"
+
+	"<% .Module %>/internal/domain/user"
+	"<% .Module %>/internal/usecase/account"
+)
+
+// Accounts is what the handlers need from the account use cases (defined here, by the consumer).
+type Accounts interface {
+	Register(ctx context.Context, in account.RegisterInput) (account.Session, error)
+	Login(ctx context.Context, in account.LoginInput) (account.Session, error)
+	Refresh(ctx context.Context, refreshToken string) (account.Session, error)
+	Me(ctx context.Context, id uuid.UUID) (user.User, error)
+	Logout(ctx context.Context, access *kitauth.Claims, in account.LogoutInput) error
+}
+
+// Users is what the handlers need from the user management use cases.
+type Users interface {
+	List(ctx context.Context, params query.Params) (query.Page[user.User], error)
+	Get(ctx context.Context, id uuid.UUID) (user.User, error)
+}
+
+// Deps are the collaborators of the API.
+type Deps struct {
+	Accounts Accounts
+	Users    Users
+	Verifier kitauth.TokenVerifier
+	Checks   []httpx.Check // readiness probes
+	// Revocation switches the logout route on; it needs a configured token store (Redis).
+	Revocation bool
+}
+
+type handler struct {
+	accounts Accounts
+	users    Users
+}
+
+// NewRouter registers every route. Wrap the result with httpx.Chain(router, httpx.DefaultStack(...)...).
+func NewRouter(d Deps) *httpx.Router {
+	r := httpx.NewRouter()
+	httpx.RegisterHealth(r, d.Checks...)
+
+	h := &handler{accounts: d.Accounts, users: d.Users}
+	authenticated := httpx.Authenticate(d.Verifier)
+	adminOnly := httpx.RequireRoles(string(user.RoleAdmin))
+
+	r.Route("POST /v1/auth/register", h.register)
+	r.Route("POST /v1/auth/login", h.login)
+	r.Route("POST /v1/auth/refresh", h.refresh)
+
+	if d.Revocation {
+		r.Route("POST /v1/auth/logout", h.logout, authenticated)
+	}
+	r.Route("GET /v1/me", h.me, authenticated)
+	r.Route("GET /v1/users", h.listUsers, authenticated, adminOnly)
+	r.Route("GET /v1/users/{id}", h.getUser, authenticated, adminOnly)
+	return r
+}

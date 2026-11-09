@@ -30,6 +30,16 @@ single `make up` (`docker compose up -d`). Other projects join the `infra` Docke
 Caps add up to ~4.7 GB, but idle usage measured on a test run is only ~0.65 GB; the caps are ceilings,
 not reservations. Budget: infra <= ~3.5 GB under load, leaving ~4 GB for projects.
 
+## Go kit (`gokit/`)
+
+Everything that repeats between my Go projects and has no business logic lives in `gokit/`: generic filtering /
+sorting / pagination with allow and deny lists, an ORM with relations and **migrations generated from the models**,
+stateless (optionally revocable) JWT auth, PostgreSQL / Redis / RabbitMQ clients, opt-in caching and Redis read models, OpenTelemetry, HTTP plumbing,
+graceful shutdown. `make new-go-project` generates a clean-architecture project that already uses
+it (Makefile, Dockerfile, dev and deploy compose files, tests, an architecture test that enforces the layer rules).
+**Go never runs on the host**: every command goes through Docker, with the module cache in the shared volume
+`gokit-cache`. See `gokit/README.md`.
+
 ## Makefile
 
 `make` lists every target. Targets marked *asks* prompt one question at a time, with an example in parentheses and the default in brackets,
@@ -52,6 +62,7 @@ and show what they will run before doing anything destructive. A value can be pa
 | `make firewall` *asks* | CDN-only HTTP port: dry run / apply / remove |
 | `make prometheus-reload` | reload Prometheus config and rules |
 | `make dashboards` | regenerate the Grafana dashboards |
+| `make new-go-project` *asks* | scaffold a Go project (clean architecture) that uses `gokit/`; also `gokit-check`, `gokit-integration`, `gokit-bench`, `gokit-bench-db`, `gokit-sync`, `gokit-jwt-key` |
 | `make psql` *asks* / `redis-cli` | shell on the shared Postgres / Redis |
 | `make tunnel` *asks* | SSH tunnel to Grafana, Prometheus, Alertmanager, RabbitMQ and Postgres |
 

@@ -1,0 +1,212 @@
+// Package account holds the registration, login and token refresh use cases. It depends only on
+// interfaces: the user repository (domain), a password hasher and a token issuer/verifier (kit).
+package account
+
+import (
+	"context"
+	"fmt"
+	"net/mail"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
+
+	"<% .KitModule %>/apperr"
+	kitauth "<% .KitModule %>/auth"
+
+	"<% .Module %>/internal/domain/user"
+)
+
+const (
+	minPasswordLen = 10
+	maxPasswordLen = 128
+)
+
+// Tokens is what the service needs from the token implementation.
+type Tokens interface {
+	kitauth.SessionIssuer
+	kitauth.TokenVerifier
+}
+
+// Session is the result of a successful authentication.
+type Session struct {
+	User   user.User
+	Tokens kitauth.TokenPair
+}
+
+// RegisterInput is a sign-up request.
+type RegisterInput struct {
+	Email    string
+	Password string
+	Name     string
+}
+
+// LoginInput is a sign-in request.
+type LoginInput struct {
+	Email    string
+	Password string
+}
+
+// Service implements the account use cases.
+type Service struct {
+	users   user.Repository
+	hasher  kitauth.PasswordHasher
+	tokens  Tokens
+	revoker kitauth.Revoker // optional: without it tokens live until they expire
+	// dummyHash is verified when the email is unknown, so that response time does not reveal
+	// which emails are registered.
+	dummyHash string
+}
+
+// Option configures optional collaborators.
+type Option func(*Service)
+
+// WithRevoker enables Logout by supplying the store that records revoked tokens.
+func WithRevoker(r kitauth.Revoker) Option { return func(s *Service) { s.revoker = r } }
+
+// New builds the service.
+func New(users user.Repository, hasher kitauth.PasswordHasher, tokens Tokens, opts ...Option) (*Service, error) {
+	dummy, err := hasher.Hash("not-a-real-password")
+	if err != nil {
+		return nil, fmt.Errorf("account: prepare dummy hash: %w", err)
+	}
+	s := &Service{users: users, hasher: hasher, tokens: tokens, dummyHash: dummy}
+	for _, o := range opts {
+		o(s)
+	}
+	return s, nil
+}
+
+// Register creates a user (always with the plain "user" role) and signs them in.
+func (s *Service) Register(ctx context.Context, in RegisterInput) (Session, error) {
+	email, name, err := validateRegistration(in)
+	if err != nil {
+		return Session{}, err
+	}
+	hash, err := s.hasher.Hash(in.Password)
+	if err != nil {
+		return Session{}, apperr.Internal(err)
+	}
+	u, err := s.users.Create(ctx, user.User{Email: email, Name: name, PasswordHash: hash, Role: user.RoleUser})
+	if err != nil {
+		return Session{}, err
+	}
+	return s.session(u)
+}
+
+// Login checks credentials. Unknown email and wrong password give the same error.
+func (s *Service) Login(ctx context.Context, in LoginInput) (Session, error) {
+	invalid := apperr.Unauthorized("invalid email or password")
+	email := normalizeEmail(in.Email)
+
+	u, err := s.users.GetByEmail(ctx, email)
+	if err != nil {
+		if apperr.Is(err, apperr.KindNotFound) {
+			_, _, _ = s.hasher.Verify(in.Password, s.dummyHash)
+			return Session{}, invalid
+		}
+		return Session{}, err
+	}
+	ok, rehash, err := s.hasher.Verify(in.Password, u.PasswordHash)
+	if err != nil {
+		return Session{}, apperr.Internal(err)
+	}
+	if !ok {
+		return Session{}, invalid
+	}
+	if rehash { // hashing parameters were raised since this password was stored: upgrade it
+		if h, err := s.hasher.Hash(in.Password); err == nil {
+			_ = s.users.UpdatePasswordHash(ctx, u.ID, h) // best effort, the login itself succeeded
+		}
+	}
+	return s.session(u)
+}
+
+// Refresh exchanges a refresh token for a new token pair. The user is loaded again, so a changed role
+// takes effect and a deleted account can no longer refresh.
+func (s *Service) Refresh(ctx context.Context, refreshToken string) (Session, error) {
+	claims, err := s.tokens.Verify(ctx, refreshToken, kitauth.TypeRefresh)
+	if err != nil {
+		return Session{}, err
+	}
+	id, err := uuid.Parse(claims.Subject)
+	if err != nil {
+		return Session{}, apperr.Unauthorized("invalid token")
+	}
+	u, err := s.users.GetByID(ctx, id)
+	if err != nil {
+		if apperr.Is(err, apperr.KindNotFound) {
+			return Session{}, apperr.Unauthorized("invalid token")
+		}
+		return Session{}, err
+	}
+	return s.session(u)
+}
+
+// LogoutInput says what to invalidate. The access token of the request is always revoked.
+type LogoutInput struct {
+	RefreshToken string // also revoke this refresh token (must belong to the same user)
+	Everywhere   bool   // revoke every token ever issued to the user
+}
+
+// Logout revokes tokens; it needs a Revoker (Redis) and reports 503 when none is configured.
+func (s *Service) Logout(ctx context.Context, access *kitauth.Claims, in LogoutInput) error {
+	if s.revoker == nil {
+		return apperr.Unavailable("logout is not available: token revocation is not configured")
+	}
+	if in.Everywhere {
+		return s.revoker.RevokeSubject(ctx, access.Subject)
+	}
+	if err := s.revoker.Revoke(ctx, access); err != nil {
+		return apperr.Internal(err)
+	}
+	if in.RefreshToken != "" {
+		refresh, err := s.tokens.Verify(ctx, in.RefreshToken, kitauth.TypeRefresh)
+		if err != nil {
+			return err
+		}
+		if refresh.Subject != access.Subject {
+			return apperr.Forbidden("the refresh token belongs to another user")
+		}
+		if err := s.revoker.Revoke(ctx, refresh); err != nil {
+			return apperr.Internal(err)
+		}
+	}
+	return nil
+}
+
+// Me returns the authenticated user.
+func (s *Service) Me(ctx context.Context, id uuid.UUID) (user.User, error) {
+	return s.users.GetByID(ctx, id)
+}
+
+func (s *Service) session(u user.User) (Session, error) {
+	pair, err := s.tokens.IssuePair(u.ID.String(), []string{string(u.Role)}, nil)
+	if err != nil {
+		return Session{}, apperr.Internal(err)
+	}
+	return Session{User: u, Tokens: pair}, nil
+}
+
+func normalizeEmail(e string) string { return strings.ToLower(strings.TrimSpace(e)) }
+
+func validateRegistration(in RegisterInput) (email, name string, err error) {
+	var bad []apperr.FieldError
+	email = normalizeEmail(in.Email)
+	if addr, perr := mail.ParseAddress(email); perr != nil || addr.Address != email || len(email) > 254 || !strings.Contains(email[strings.LastIndex(email, "@"):], ".") {
+		bad = append(bad, apperr.FieldError{Field: "email", Message: "must be a valid email address"})
+	}
+	name = strings.TrimSpace(in.Name)
+	if n := utf8.RuneCountInString(name); n < 1 || n > 100 {
+		bad = append(bad, apperr.FieldError{Field: "name", Message: "must be 1 to 100 characters"})
+	}
+	if n := len(in.Password); n < minPasswordLen || n > maxPasswordLen {
+		bad = append(bad, apperr.FieldError{Field: "password",
+			Message: fmt.Sprintf("must be %d to %d characters", minPasswordLen, maxPasswordLen)})
+	}
+	if len(bad) > 0 {
+		return "", "", apperr.Invalid("invalid input", bad...)
+	}
+	return email, name, nil
+}
+

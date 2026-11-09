@@ -1,0 +1,122 @@
+package httpapi
+
+import (
+	"net/http"
+
+	"github.com/google/uuid"
+
+	"<% .KitModule %>/apperr"
+	kitauth "<% .KitModule %>/auth"
+	"<% .KitModule %>/httpx"
+	"<% .KitModule %>/query"
+
+	"<% .Module %>/internal/usecase/account"
+)
+
+func (h *handler) register(w http.ResponseWriter, r *http.Request) error {
+	req, err := httpx.Decode[registerRequest](r)
+	if err != nil {
+		return err
+	}
+	s, err := h.accounts.Register(r.Context(), account.RegisterInput{Email: req.Email, Password: req.Password, Name: req.Name})
+	if err != nil {
+		return err
+	}
+	httpx.JSON(w, http.StatusCreated, toSessionResponse(s))
+	return nil
+}
+
+func (h *handler) login(w http.ResponseWriter, r *http.Request) error {
+	req, err := httpx.Decode[loginRequest](r)
+	if err != nil {
+		return err
+	}
+	s, err := h.accounts.Login(r.Context(), account.LoginInput{Email: req.Email, Password: req.Password})
+	if err != nil {
+		return err
+	}
+	httpx.JSON(w, http.StatusOK, toSessionResponse(s))
+	return nil
+}
+
+func (h *handler) refresh(w http.ResponseWriter, r *http.Request) error {
+	req, err := httpx.Decode[refreshRequest](r)
+	if err != nil {
+		return err
+	}
+	s, err := h.accounts.Refresh(r.Context(), req.RefreshToken)
+	if err != nil {
+		return err
+	}
+	httpx.JSON(w, http.StatusOK, toSessionResponse(s))
+	return nil
+}
+
+// logout revokes the presented access token (and optionally a refresh token, or everything the user has).
+// The body is optional.
+func (h *handler) logout(w http.ResponseWriter, r *http.Request) error {
+	claims, ok := kitauth.ClaimsFrom(r.Context())
+	if !ok {
+		return apperr.Unauthorized("authentication required")
+	}
+	var req logoutRequest
+	if r.ContentLength != 0 {
+		var err error
+		if req, err = httpx.Decode[logoutRequest](r); err != nil {
+			return err
+		}
+	}
+	if err := h.accounts.Logout(r.Context(), claims, account.LogoutInput{RefreshToken: req.RefreshToken, Everywhere: req.Everywhere}); err != nil {
+		return err
+	}
+	httpx.NoContent(w)
+	return nil
+}
+
+func (h *handler) me(w http.ResponseWriter, r *http.Request) error {
+	claims, ok := kitauth.ClaimsFrom(r.Context())
+	if !ok {
+		return apperr.Unauthorized("authentication required")
+	}
+	id, err := uuid.Parse(claims.Subject)
+	if err != nil {
+		return apperr.Unauthorized("invalid token")
+	}
+	u, err := h.accounts.Me(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	httpx.JSON(w, http.StatusOK, toUserResponse(u))
+	return nil
+}
+
+// listUsers supports ?filter[role]=admin&filter[email][prefix]=ada&sort=-created_at&page=2&page_size=50
+func (h *handler) listUsers(w http.ResponseWriter, r *http.Request) error {
+	params, err := httpx.ListParams(r)
+	if err != nil {
+		return err
+	}
+	page, err := h.users.List(r.Context(), params)
+	if err != nil {
+		return err
+	}
+	httpx.JSON(w, http.StatusOK, query.MapPage(page, toUserResponse))
+	return nil
+}
+
+func (h *handler) getUser(w http.ResponseWriter, r *http.Request) error {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		return apperr.InvalidField("id", "must be a UUID")
+	}
+	u, err := h.users.Get(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	httpx.JSON(w, http.StatusOK, toUserResponse(u))
+	return nil
+}
+
+func toSessionResponse(s account.Session) sessionResponse {
+	return sessionResponse{User: toUserResponse(s.User), Tokens: s.Tokens}
+}

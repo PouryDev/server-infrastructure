@@ -1,0 +1,110 @@
+# <% .Name %>
+
+Go API on clean architecture, built on the shared kit (`<% .KitModule %>`). **Nothing runs outside Docker**,
+not even locally: every command below starts a container. `make` lists all targets.
+
+```bash
+make init            # .env with a fresh JWT secret, shared Go cache volume
+make up              # API with hot reload on http://127.0.0.1:8080 + PostgreSQL
+make migrate-up      # create the schema (migrations/ holds goose files, embedded in the migrate binary)
+curl -s localhost:8080/healthz
+make test            # unit tests;  make test-integration  needs the db container;  make check  = everything CI runs
+```
+
+## Layout (dependencies point inwards only, enforced by `internal/architecture_test.go`)
+
+```
+cmd/api            entrypoint: config -> bootstrap.Run; `api healthcheck` for the container healthcheck
+cmd/migrate        one-shot migration command (up | down | status | create)
+internal/domain    entities + repository interfaces. Imports nothing from the other layers.
+internal/usecase   application rules (account: register/login/refresh, users: list/get). Depends on interfaces.
+internal/adapter   httpapi (HTTP in) and postgres (SQL out). Implements / calls the layers above.
+internal/bootstrap composition root: the only place that wires concrete types together
+internal/config    environment variables -> typed Config
+migrations         goose SQL files, embedded in the migrate binary
+deploy/compose.yaml  production compose file for the shared infrastructure (used by scripts/ship.sh)
+```
+
+Add a feature by growing the layers from the inside: entity + repository interface in `domain`, the rule in
+`usecase`, SQL in `adapter/postgres`, routes in `adapter/httpapi`, one line each in `bootstrap`.
+
+## What the kit gives this project
+
+| Need | Where |
+|---|---|
+| Filtering, sorting, pagination | `query` + `postgres.Paginate`; clients send `?filter[role]=admin&filter[email][prefix]=ada&sort=-created_at&page=2&page_size=50` |
+| Allow / deny lists for fields | struct tags (`query:"-"`, `nofilter`, `nosort`), `query.WithFilterPolicy(query.DenyFields(...))`, per request `schema.Restrict(...)` |
+| Caching, read models | `redisx` (`Remember`, `ReadModel`, versioned invalidation) as an opt-in **decorator** in `internal/adapter`; see "Caching" in `gokit/README.md`. Not enabled by default: wrap only the repositories and methods you choose |
+| Revocable tokens | set `REDIS_URL` + `REDIS_KEY_PREFIX` and `POST /v1/auth/logout` appears (`auth.Revocations` on Redis); without Redis tokens simply expire |
+| Stateless JWT auth | `auth` (HS256 or Ed25519, key rotation, access + refresh tokens), `httpx.Authenticate`, `httpx.RequireRoles` |
+| Passwords | `auth.Argon2id` (self-upgrading hashes) |
+| Database access | `orm` (typed CRUD, query builder, relations preloaded without N+1, bulk insert, soft delete, keyset pagination) on `postgres` (PgBouncer-safe pool, retry on start, slow-query log, transactions via `db.WithTx`) |
+| Migrations | `migrate` (no session locks, safe behind PgBouncer) **and generated from the models**: `make migrate-diff NAME=...` |
+| Tracing + metrics | `telemetry` (OTLP to the collector, no app-side sampling) + `httpx.Instrument` (`http.server.request.duration`) |
+| Logs | `logging` (JSON, with `trace_id`) |
+| Errors | `apperr` kinds -> HTTP status in `httpx`; internal errors are logged, never shown |
+
+Filter operators: `eq ne gt gte lt lte like prefix in nin between null`. Filterable fields of `users`:
+`id email name role created_at`; the password hash is not queryable.
+
+## API
+
+| Route | Auth |
+|---|---|
+| `POST /v1/auth/register` `{email,password,name}` | none |
+| `POST /v1/auth/login` `{email,password}` | none |
+| `POST /v1/auth/refresh` `{refresh_token}` | refresh token |
+| `POST /v1/auth/logout` `{refresh_token?, everywhere?}` | access token; only when Redis is configured |
+| `GET /v1/me` | access token |
+| `GET /v1/users`, `GET /v1/users/{id}` | access token, role `admin` |
+| `GET /healthz` (liveness), `GET /readyz` (dependencies) | none |
+
+Make someone an admin: `make psql`, then `UPDATE users SET role='admin' WHERE email='you@example.com';`
+(tokens issued earlier keep the old role until the next refresh).
+
+Access tokens live 15 minutes; refresh tokens carry identity only, and the role is re-read from the database when
+they are exchanged. Without Redis nothing can be revoked before expiry (stateless by design); with Redis
+`logout` revokes the access token (and optionally the refresh token), and `{"everywhere": true}` voids every token
+the user holds.
+
+## Changing the schema
+
+Edit the row struct in `internal/adapter/postgres` (tags describe the column), then:
+
+```bash
+make migrate-diff NAME=add_phone     # writes migrations/<timestamp>_add_phone.sql with Up AND Down; read its WARNING comments
+make migrate-up                      # apply; make migrate-down rolls the last one back
+make migrate-drift                   # CI: fails when the models changed without a migration
+```
+
+`migrate diff` compares the models with what your existing migrations actually produce (it applies them to a
+temporary database), so it never relies on the state of your dev database. New row structs go into `Models()` in
+`models.go`. Relations (`orm:"rel=belongs_to;fk=author_id"`, `has_many`, `many_to_many`) become foreign keys and join
+tables. It never drops anything by itself (`FLAGS=--allow-drop` opts in). Beyond plain columns it handles:
+
+* **Renames**: tag the field `orm:"was=old_column"` (table: a `WasTable() string` method) and the migration renames,
+  keeping the data and the constraints and indexes attached. Remove the tag after the migration was applied.
+* **CHECK constraints**: `orm:"check=age >= 0"` on a column, or a `Checks() map[string]string` method for table-level
+  ones. They are matched by name, so give a changed check a new name.
+* **Big production tables**: `make migrate-diff NAME=add_index FLAGS=--concurrent-indexes` puts new indexes on existing
+  tables into a second, non-transactional file using `CREATE INDEX CONCURRENTLY` (no write lock).
+
+Joins in queries: `Has("Author", orm.Eq("name", "x"))` / `NotHas` (EXISTS, never repeats rows), `Join("Author")` and
+`LeftJoin` with `"Author.name"` in `Where`/`OrderBy`, `orm.Project` for aggregates and joined columns, and
+`orm.Fetch` for any SQL you want to write yourself, scanned by column name into a struct.
+
+## The kit copy
+
+`.kit/` is a vendored copy of the kit (`replace` in `go.mod`), so the project builds before the kit is
+published. To follow kit changes run `make gokit-sync PROJECT=<this dir>` in the infrastructure repo. To use a
+published version instead, delete `.kit/` and the `replace` line and `require` a tag.
+
+## First deploy
+
+1. In the infrastructure repo: `make new-project` (creates the DB, nginx blocks and `<apps dir>/<% .Name %>/.env`).
+2. The generated env file already has `DATABASE_URL`, `REDIS_URL`, `REDIS_KEY_PREFIX` and `AMQP_URL`. Add the JWT settings to it: `JWT_SECRET=<64 hex chars>` (or `JWT_PRIVATE_KEY`), optionally
+   `JWT_ISSUER`, `JWT_AUDIENCE`, `CORS_ALLOWED_ORIGINS`. `make gokit-jwt-key` in the infra repo prints keys.
+3. `make ship` (vendors modules, builds `<% .Name %>-api:<git-sha>`, deploys with rollback). The compose file runs
+   `<% .Name %>-migrate` (one-shot) before `<% .Name %>-api`.
+
+`AGENTS.md` is the infrastructure contract (ports, limits, health, telemetry rules) this project follows.

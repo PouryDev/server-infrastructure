@@ -15,7 +15,8 @@ NEED_ENV = test -f .env || { echo "No .env yet - run: make init" >&2; exit 1; }
 .PHONY: help init up down restart update pull ps status logs config \
         new-project ship firewall update-arvan-ips \
         nginx-test nginx-reload prometheus-reload dashboards \
-        psql redis-cli tunnel
+        psql redis-cli tunnel \
+        new-go-project gokit-test gokit-check gokit-integration gokit-bench gokit-bench-db gokit-sync gokit-jwt-key
 
 help: ## Show this help
 	@awk 'BEGIN{FS=":.*## "} /^##@/{printf "\n\033[1m%s\033[0m\n", substr($$0,5)} /^[a-zA-Z_-]+:.*## /{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -148,6 +149,38 @@ prometheus-reload: ## Reload Prometheus config and rules without restarting
 
 dashboards: ## Regenerate the Grafana dashboards from scripts/gen-dashboards.py
 	@python3 scripts/gen-dashboards.py
+
+##@ Go kit (gokit/, everything runs in Docker)
+new-go-project: ## Scaffold a clean-architecture Go project that uses the kit (asks where)
+	$(LIB)
+	ask DEST "Directory for the new project (its last element is the project name)" "~/projects/shop" "" '.+'
+	NAME="$$(basename "$${DEST/#\~/$$HOME}")"
+	[[ "$$NAME" =~ ^[a-z][a-z0-9-]{1,30}$$ ]] || die "project name '$$NAME' must be lowercase letters, digits, hyphens"
+	ask MODULE "Go module path" "github.com/PouryDev/$$NAME" "github.com/PouryDev/$$NAME" '^[A-Za-z0-9][A-Za-z0-9._~/-]*$$'
+	scripts/gokit.sh new "$$DEST" --module "$$MODULE"
+
+gokit-test: ## Unit tests of the kit
+	@scripts/gokit.sh test
+
+gokit-integration: ## Kit tests that need PostgreSQL, PgBouncer, Redis, RabbitMQ (throw-away containers)
+	@scripts/gokit.sh integration
+
+gokit-bench: ## Kit micro-benchmarks (no database)
+	@scripts/gokit.sh bench ./query ./auth ./httpx ./orm
+
+gokit-bench-db: ## Kit benchmarks against throw-away PostgreSQL / PgBouncer (ORM vs raw pgx, bulk, preload, pagination)
+	@scripts/gokit.sh bench-db
+
+gokit-check: ## Kit: gofmt, vet, golangci-lint, tests
+	@scripts/gokit.sh check
+
+gokit-sync: ## Refresh the vendored kit copy (.kit) of a project (asks which)
+	$(LIB)
+	ask PROJECT "Project directory" "~/projects/shop" "" '.+'
+	scripts/gokit.sh sync "$${PROJECT/#\~/$$HOME}"
+
+gokit-jwt-key: ## Print a new Ed25519 key pair for JWT_PRIVATE_KEY / JWT_PUBLIC_KEY (or: make gokit-jwt-key ARGS=--hs256)
+	@scripts/gokit.sh jwt-key $(ARGS)
 
 ##@ Admin
 psql: ## Open psql on the shared Postgres (asks which database)

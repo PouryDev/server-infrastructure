@@ -1,0 +1,28 @@
+// Package users holds the read-side use cases for user management.
+package users
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+
+	"<% .KitModule %>/query"
+
+	"<% .Module %>/internal/domain/user"
+)
+
+// Service lists and fetches users.
+type Service struct{ repo user.Repository }
+
+// New builds the service.
+func New(repo user.Repository) *Service { return &Service{repo: repo} }
+
+// List returns a page of users for the client's filters, sorting and pagination.
+func (s *Service) List(ctx context.Context, params query.Params) (query.Page[user.User], error) {
+	return s.repo.List(ctx, params)
+}
+
+// Get returns one user.
+func (s *Service) Get(ctx context.Context, id uuid.UUID) (user.User, error) {
+	return s.repo.GetByID(ctx, id)
+}

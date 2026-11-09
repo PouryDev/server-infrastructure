@@ -1,0 +1,9 @@
+# Read by scripts/ship.sh (copied from the infrastructure repo). Bash syntax.
+APP=<%.Name%>
+# Local infrastructure on this machine: no ssh, deploy straight into the local apps dir (APPS_DIR of the
+# infra .env). For the real server use e.g. SSH_HOST=deploy@your-server and drop REMOTE_DIR (default /srv/apps/$APP).
+SSH_HOST=local
+REMOTE_DIR=$HOME/infra-local/apps/<%.Name%>
+COMPOSE_FILE=deploy/compose.yaml
+# One image holds both binaries (/api and /migrate): service "api" -> image <%.Name%>-api:<git-sha>
+IMAGES=("api=.")

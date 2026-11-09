@@ -1,0 +1,43 @@
+// Package user is the domain core: entities and the contracts the outside world must fulfil. It
+// imports nothing from the other layers (see internal/architecture_test.go).
+package user
+
+import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+
+	"<% .KitModule %>/query"
+)
+
+// Role decides what a user may do.
+type Role string
+
+const (
+	RoleUser  Role = "user"
+	RoleAdmin Role = "admin"
+)
+
+// User is an account.
+type User struct {
+	ID           uuid.UUID
+	Email        string
+	Name         string
+	PasswordHash string
+	Role         Role
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// Repository is implemented by the persistence adapter. Errors are classified with the kit's apperr
+// kinds: a missing row is KindNotFound, a taken email is KindConflict with code "email_taken".
+type Repository interface {
+	Create(ctx context.Context, u User) (User, error)
+	GetByID(ctx context.Context, id uuid.UUID) (User, error)
+	GetByEmail(ctx context.Context, email string) (User, error)
+	UpdatePasswordHash(ctx context.Context, id uuid.UUID, hash string) error
+	// List returns one page of users; params carry the client's filters, sorting and pagination and
+	// are validated against what the repository allows to be queried.
+	List(ctx context.Context, params query.Params) (query.Page[User], error)
+}

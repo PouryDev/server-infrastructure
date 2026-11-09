@@ -9,6 +9,9 @@ The infrastructure already runs shared PostgreSQL (behind PgBouncer), Redis, Rab
 and an OpenTelemetry / Prometheus / Tempo / Grafana stack. A project must **use** them and must not
 start its own databases, brokers or reverse proxies.
 
+(Go projects: `make new-go-project` in the infrastructure repo generates a project that already satisfies the
+checklist in section 7. Nothing in this document requires it.)
+
 ## 1. What is provided
 
 | Need | Where (inside the Docker network `infra`) | Env var |
@@ -67,7 +70,9 @@ Set `OTEL_SERVICE_NAME` per service in the compose file.
 * Transaction pooling means a client does not keep the same server connection between transactions.
   Therefore do not use: session-level `SET` (use `SET LOCAL` in a transaction), session-level advisory
   locks (transaction-level ones are fine), `LISTEN/NOTIFY`, temporary tables or cursors that outlive a
-  transaction. Protocol-level prepared statements are supported.
+  transaction. Protocol-level (named) prepared statements are supported: PgBouncer allows up to 200 per
+  client connection (`max_prepared_statements`), so keep a driver-side statement cache well below that
+  (for example 128) or use describe-only mode.
 * **Migrations**: use a migration tool/mode that does not depend on session-level locks (a
   session-level advisory lock is unsafe through PgBouncer). Run migrations as a separate one-shot step
   (e.g. the same image with a `migrate` command), not on every replica boot. Direct superuser access
@@ -85,10 +90,29 @@ Set `OTEL_SERVICE_NAME` per service in the compose file.
 * The ACL denies admin/dangerous commands (`KEYS`, `FLUSHALL`, `FLUSHDB`, `CONFIG`, `DEBUG`,
   `SHUTDOWN`, ...). Use `SCAN` with a prefix instead of `KEYS`.
 
+**Caching and read models (optional, but if used, follow these):**
+
+* Memory is small, shared and evicting, so **whatever is stored must be rebuildable from PostgreSQL**. A cache or
+  a Redis read model is never the source of truth. Always set a TTL; add random jitter so keys written together
+  do not expire together.
+* **Fail open.** A Redis error or outage must degrade to "read from the database", never to a failed request.
+  Log it, do not return it.
+* **Protect the database from stampedes.** When a hot key expires, concurrent misses must run one loader, not
+  one query each. Cache "not found" only with a short TTL (tens of seconds).
+* **Invalidate without `KEYS`:** either delete the exact key on write, or put a version in the key
+  (`users:v7:<id>`, version in a small counter key with a TTL) and increment it on write so old keys are never
+  read again and expire by themselves. Keep data TTLs far below the counter's TTL.
+* Read models are eventually consistent. Anything that must be exact (payments, stock, authorisation decisions)
+  reads PostgreSQL. Batch reads (`MGET`, one batched database query for the misses), never one round trip per id.
+* Never cache a personalised response under a key that does not contain the user; never put secrets or
+  unhashed credentials in Redis values. Keep values small (hundreds of bytes to a few KB).
+
 ### RabbitMQ
 
 * Connect with `AMQP_URL` (it already contains your vhost). You have full rights inside your vhost only.
 * Limits per vhost: 100 connections, 500 queues. Channels are capped at 256 per connection.
+* **Declare queues durable (or exclusive).** RabbitMQ 4 rejects non-durable, non-exclusive queues
+  (`transient_nonexcl_queues` is deprecated) with a channel error.
 * The broker blocks publishers when it reaches its memory watermark (300 MB total, shared), so keep
   messages small and make sure queues are consumed. Handle connection/channel close events by
   reconnecting and re-declaring topology.
@@ -202,7 +226,7 @@ local use are `<app>.localhost` and `api.<app>.localhost`.
 - [ ] `mem_limit` + `cpus`, healthcheck, read-only fs, uid 65532, `cap_drop: [ALL]`, `no-new-privileges`
 - [ ] All settings from environment variables; `.env.example` lists names only; no secrets committed
 - [ ] PostgreSQL through `DATABASE_URL` without session state; migrations safe for transaction pooling
-- [ ] Redis keys prefixed with `REDIS_KEY_PREFIX` and given TTLs; RabbitMQ reconnects after failures
+- [ ] Redis keys prefixed with `REDIS_KEY_PREFIX` and given TTLs; anything cached is rebuildable and fails open; RabbitMQ queues durable, reconnects after failures
 - [ ] OTLP to the collector, no application-side sampling, W3C propagation, `http.server.request.duration` emitted
 - [ ] Retry/backoff when dependencies are unavailable; graceful stop on SIGTERM within `stop_grace_period`
 - [ ] `GET /healthz` exists and does not depend on external services

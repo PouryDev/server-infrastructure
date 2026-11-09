@@ -1,0 +1,147 @@
+# Nothing in this project runs outside Docker: every target below starts a container.
+# Run `make` to list targets. Offline? The Go module cache lives in a shared Docker volume, so once a
+# module has been downloaded it is never fetched again (override with GOPROXY=off to be strict).
+
+SHELL := bash
+.SHELLFLAGS := -e -o pipefail -c
+.DEFAULT_GOAL := help
+
+APP            := <%.Name%>
+GO_IMAGE       ?= <%.GoImage%>
+DB_IMAGE       ?= <%.DBImage%>
+LINT_IMAGE     ?= <%.LintImage%>
+GO_CACHE_VOLUME ?= gokit-cache
+TAG            ?= $(shell git rev-parse --short=10 HEAD 2>/dev/null || echo dev)
+export GO_IMAGE DB_IMAGE GO_CACHE_VOLUME
+export HOST_UID := $(shell id -u)
+export HOST_GID := $(shell id -g)
+# Passed through to the containers when set (e.g. `make tidy GOPROXY=off GOSUMDB=off`).
+ifdef GOPROXY
+export GOPROXY
+endif
+ifdef GOSUMDB
+export GOSUMDB
+endif
+ifdef GOFLAGS
+export GOFLAGS
+endif
+
+DC  := docker compose -f compose.dev.yaml --profile tools
+GO  := $(DC) run --rm --no-deps -T tools
+NAME ?=
+
+.PHONY: help init prepare up down restart logs ps psql shell \
+        migrate-up migrate-down migrate-status migrate-diff migrate-drift migrate-new \
+        test test-integration vet fmt fmt-check lint check tidy vendor build image ship clean
+
+help: ## Show this help
+	@awk 'BEGIN{FS=":.*## "} /^##@/{printf "\n\033[1m%s\033[0m\n", substr($$0,5)} /^[a-zA-Z_-]+:.*## /{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo
+
+##@ Setup
+init: prepare ## Create .env (fresh JWT secret) and prepare the shared Go cache volume
+
+# Idempotent; every container target depends on it.
+prepare:
+	@if [ ! -f .env ]; then \
+	  cp .env.example .env; \
+	  sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')|" .env; \
+	  echo "created .env"; \
+	fi
+	@docker volume inspect $(GO_CACHE_VOLUME) >/dev/null 2>&1 || docker volume create $(GO_CACHE_VOLUME) >/dev/null
+	@docker run --rm -u 0 --entrypoint sh -v $(GO_CACHE_VOLUME):/go $(GO_IMAGE) -c \
+	  'test -f /go/.gokit-perms || { mkdir -p /go/.buildcache && chmod -R a+rwX /go && touch /go/.gokit-perms; }'
+
+##@ Run
+up: prepare ## Start the API (hot reload) and PostgreSQL
+	$(DC) up -d api db
+	@echo "API: http://127.0.0.1:$${API_PORT:-8080}/healthz   (make logs to follow)"
+
+down: ## Stop everything (keeps the database volume)
+	$(DC) down
+
+restart: prepare ## Restart the API
+	$(DC) restart api
+
+logs: ## Follow the API logs
+	$(DC) logs -f --tail 100 api
+
+ps: ## Container state
+	$(DC) ps
+
+psql: ## psql shell on the development database
+	$(DC) exec db psql -U app -d app
+
+shell: prepare ## Interactive shell in the Go toolbox container
+	$(DC) run --rm --no-deps tools sh
+
+##@ Database
+migrate-up: prepare ## Apply pending migrations
+	$(DC) up -d --wait db
+	$(GO) go run ./cmd/migrate up
+
+migrate-down: prepare ## Roll back the last migration
+	$(DC) up -d --wait db
+	$(GO) go run ./cmd/migrate down
+
+migrate-status: prepare ## Show applied and pending migrations
+	$(DC) up -d --wait db
+	$(GO) go run ./cmd/migrate status
+
+migrate-diff: prepare ## Generate a migration from model changes: make migrate-diff NAME=add_orders [FLAGS=--concurrent-indexes]
+	@test -n "$(NAME)" || { echo "usage: make migrate-diff NAME=add_orders [FLAGS=--concurrent-indexes|--allow-drop]" >&2; exit 1; }
+	$(DC) up -d --wait db
+	$(GO) go run ./cmd/migrate diff "$(NAME)" $(FLAGS)
+
+migrate-drift: prepare ## Fail if the models and the migrations disagree (for CI)
+	$(DC) up -d --wait db
+	$(GO) go run ./cmd/migrate drift
+
+migrate-new: prepare ## Create an empty migration: make migrate-new NAME=add_orders
+	@test -n "$(NAME)" || { echo "usage: make migrate-new NAME=add_orders" >&2; exit 1; }
+	$(GO) go run ./cmd/migrate create "$(NAME)"
+
+##@ Quality
+test: prepare ## Unit tests (no database needed)
+	$(GO) go test -count=1 ./...
+
+test-integration: prepare ## Tests that need PostgreSQL (starts the db container)
+	$(DC) up -d --wait db
+	$(GO) go test -count=1 -tags=integration ./...
+
+vet: prepare ## go vet
+	$(GO) go vet ./...
+
+fmt: prepare ## Format the code
+	$(GO) gofmt -w cmd internal migrations
+
+fmt-check: prepare ## Fail if code is not formatted
+	$(GO) sh -c 'test -z "$$(gofmt -l cmd internal migrations)" || { gofmt -l cmd internal migrations; echo "run: make fmt" >&2; exit 1; }'
+
+lint: prepare ## golangci-lint
+	docker run --rm -u $(HOST_UID):$(HOST_GID) -v "$(CURDIR)":/src -v $(GO_CACHE_VOLUME):/go -w /src \
+	  -e HOME=/tmp -e GOCACHE=/go/.buildcache -e GOLANGCI_LINT_CACHE=/go/.lintcache -e CGO_ENABLED=0 \
+	  $${GOPROXY:+-e GOPROXY} $${GOSUMDB:+-e GOSUMDB} $${GOFLAGS:+-e GOFLAGS} \
+	  $(LINT_IMAGE) golangci-lint run ./...
+
+check: fmt-check vet lint test ## Everything CI would run
+
+build: prepare ## Compile all packages
+	$(GO) go build ./...
+
+tidy: prepare ## go mod tidy
+	$(GO) go mod tidy $(TIDY_FLAGS)
+
+vendor: prepare ## Copy dependencies into vendor/ (the image build then needs no network)
+	$(GO) go mod vendor
+
+##@ Deploy
+image: vendor ## Build the production image $(APP)-api:$(TAG)
+	docker build --pull=false --build-arg GO_IMAGE=$(GO_IMAGE) -t $(APP)-api:$(TAG) .
+
+ship: vendor ## Build and deploy to the shared infrastructure (scripts/ship.sh)
+	@test -x scripts/ship.sh || { echo "scripts/ship.sh missing: copy it from the infrastructure repo" >&2; exit 1; }
+	scripts/ship.sh
+
+clean: ## Remove build leftovers (tmp/, vendor/)
+	rm -rf tmp vendor

@@ -1,0 +1,49 @@
+package httpapi
+
+import (
+	"time"
+
+	"github.com/google/uuid"
+
+	kitauth "<% .KitModule %>/auth"
+
+	"<% .Module %>/internal/domain/user"
+)
+
+type registerRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Name     string `json:"name"`
+}
+
+type loginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type refreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+type logoutRequest struct {
+	RefreshToken string `json:"refresh_token"`
+	Everywhere   bool   `json:"everywhere"`
+}
+
+type userResponse struct {
+	ID        uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	Name      string    `json:"name"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type sessionResponse struct {
+	User   userResponse      `json:"user"`
+	Tokens kitauth.TokenPair `json:"tokens"`
+}
+
+func toUserResponse(u user.User) userResponse {
+	return userResponse{ID: u.ID, Email: u.Email, Name: u.Name, Role: string(u.Role), CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt}
+}

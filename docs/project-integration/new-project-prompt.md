@@ -3,6 +3,10 @@
 The infrastructure contract lives in `AGENTS.md` (next to this file). It covers only how a project connects to
 the shared infrastructure, not how the project itself is built.
 
+> **Go projects:** `make new-go-project` (in this repo) generates the whole project on the shared Go kit, already
+> following this contract (compose files, health endpoint, graceful shutdown, OpenTelemetry, migrations). Then you
+> only need `make new-project` below and the "First deploy" section of the generated README. See `gokit/README.md`.
+
 ## 1. Prepare (once per project)
 
 ```bash

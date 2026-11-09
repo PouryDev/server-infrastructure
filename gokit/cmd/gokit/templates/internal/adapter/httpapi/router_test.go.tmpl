@@ -1,0 +1,149 @@
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"<% .KitModule %>/apperr"
+	kitauth "<% .KitModule %>/auth"
+	"<% .KitModule %>/query"
+
+	"<% .Module %>/internal/domain/user"
+	"<% .Module %>/internal/usecase/account"
+)
+
+type fakeAccounts struct{ session account.Session }
+
+func (f fakeAccounts) Register(context.Context, account.RegisterInput) (account.Session, error) {
+	return f.session, nil
+}
+func (f fakeAccounts) Login(context.Context, account.LoginInput) (account.Session, error) {
+	return account.Session{}, apperr.Unauthorized("invalid email or password")
+}
+func (f fakeAccounts) Refresh(context.Context, string) (account.Session, error) { return f.session, nil }
+func (f fakeAccounts) Me(context.Context, uuid.UUID) (user.User, error)         { return f.session.User, nil }
+func (f fakeAccounts) Logout(context.Context, *kitauth.Claims, account.LogoutInput) error {
+	return nil
+}
+
+type fakeUsers struct{ got query.Params }
+
+func (f *fakeUsers) List(_ context.Context, p query.Params) (query.Page[user.User], error) {
+	f.got = p
+	return query.NewPage([]user.User{{ID: uuid.New(), Email: "a@b.co", Role: user.RoleAdmin}}, 1, 20, false, 1), nil
+}
+func (f *fakeUsers) Get(context.Context, uuid.UUID) (user.User, error) {
+	return user.User{}, apperr.NotFound("user")
+}
+
+func setup(t *testing.T) (http.Handler, *kitauth.JWT, *fakeUsers) {
+	t.Helper()
+	keys, _ := kitauth.KeyConfig{Secret: strings.Repeat("k", 32)}.KeySet()
+	jwt, err := kitauth.NewJWT(kitauth.JWTConfig{Issuer: "t", Audience: "t"}, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := user.User{ID: uuid.New(), Email: "a@b.co", Role: user.RoleUser, CreatedAt: time.Now()}
+	users := &fakeUsers{}
+	r := NewRouter(Deps{Accounts: fakeAccounts{account.Session{User: u}}, Users: users, Verifier: jwt, Revocation: true})
+	return r, jwt, users
+}
+
+func call(h http.Handler, method, target, body, token string) *httptest.ResponseRecorder {
+	req := httptest.NewRequestWithContext(context.Background(), method, target, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestRegisterAndErrors(t *testing.T) {
+	h, _, _ := setup(t)
+	if rec := call(h, "POST", "/v1/auth/register", `{"email":"a@b.co","password":"x","name":"A"}`, ""); rec.Code != http.StatusCreated {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if rec := call(h, "POST", "/v1/auth/register", `{"email":"a@b.co","admin":true}`, ""); rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown fields must be rejected: %d", rec.Code)
+	}
+	if rec := call(h, "POST", "/v1/auth/login", `{"email":"a@b.co","password":"nope"}`, ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("%d", rec.Code)
+	}
+}
+
+func TestAuthorizationAndListParams(t *testing.T) {
+	h, jwt, users := setup(t)
+	userTok, _ := jwt.IssuePair(uuid.NewString(), []string{"user"}, nil)
+	adminTok, _ := jwt.IssuePair(uuid.NewString(), []string{"admin"}, nil)
+
+	if rec := call(h, "GET", "/v1/users", "", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous: %d", rec.Code)
+	}
+	if rec := call(h, "GET", "/v1/users", "", userTok.AccessToken); rec.Code != http.StatusForbidden {
+		t.Fatalf("plain user: %d", rec.Code)
+	}
+	if rec := call(h, "GET", "/v1/me", "", userTok.RefreshToken); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("refresh token as access token: %d", rec.Code)
+	}
+	if rec := call(h, "GET", "/v1/me", "", userTok.AccessToken); rec.Code != http.StatusOK {
+		t.Fatalf("me: %d", rec.Code)
+	}
+
+	rec := call(h, "GET", "/v1/users?filter[role]=admin&filter[email][prefix]=a&sort=-created_at&page=2&page_size=5", "", adminTok.AccessToken)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if len(users.got.Filters) != 2 || users.got.Sort[0].Field != "created_at" || !users.got.Sort[0].Desc || users.got.Page != 2 || users.got.PageSize != 5 {
+		t.Fatalf("params not forwarded: %+v", users.got)
+	}
+	var body struct {
+		Items []map[string]any `json:"items"`
+		Meta  map[string]any   `json:"meta"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || len(body.Items) != 1 || body.Meta["has_next"] != false {
+		t.Fatalf("%s", rec.Body)
+	}
+	if _, leaked := body.Items[0]["password_hash"]; leaked {
+		t.Fatal("password hash must never be serialised")
+	}
+
+	if rec := call(h, "GET", "/v1/users/not-a-uuid", "", adminTok.AccessToken); rec.Code != http.StatusBadRequest {
+		t.Fatalf("%d", rec.Code)
+	}
+	if rec := call(h, "GET", "/v1/users/"+uuid.NewString(), "", adminTok.AccessToken); rec.Code != http.StatusNotFound {
+		t.Fatalf("%d", rec.Code)
+	}
+	if rec := call(h, "GET", "/healthz", "", ""); rec.Code != http.StatusOK {
+		t.Fatalf("%d", rec.Code)
+	}
+}
+
+func TestLogoutRoute(t *testing.T) {
+	h, jwt, _ := setup(t)
+	tok, _ := jwt.IssuePair(uuid.NewString(), []string{"user"}, nil)
+	if rec := call(h, "POST", "/v1/auth/logout", "", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous: %d", rec.Code)
+	}
+	if rec := call(h, "POST", "/v1/auth/logout", "", tok.AccessToken); rec.Code != http.StatusNoContent {
+		t.Fatalf("empty body: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(h, "POST", "/v1/auth/logout", `{"everywhere":true}`, tok.AccessToken); rec.Code != http.StatusNoContent {
+		t.Fatalf("with body: %d", rec.Code)
+	}
+	// without revocation support the route does not exist
+	keys, _ := kitauth.KeyConfig{Secret: strings.Repeat("k", 32)}.KeySet()
+	j2, _ := kitauth.NewJWT(kitauth.JWTConfig{Issuer: "t", Audience: "t"}, keys)
+	r2 := NewRouter(Deps{Accounts: fakeAccounts{}, Users: &fakeUsers{}, Verifier: j2})
+	if rec := call(r2, "POST", "/v1/auth/logout", "", tok.AccessToken); rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("route must be absent: %d", rec.Code)
+	}
+}

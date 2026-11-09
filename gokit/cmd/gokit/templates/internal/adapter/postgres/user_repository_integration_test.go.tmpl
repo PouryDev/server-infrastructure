@@ -1,0 +1,94 @@
+//go:build integration
+
+package postgres
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"<% .KitModule %>/apperr"
+	"<% .KitModule %>/migrate"
+	kitpg "<% .KitModule %>/postgres"
+	"<% .KitModule %>/query"
+
+	"<% .Module %>/internal/domain/user"
+	"<% .Module %>/migrations"
+)
+
+// Run with `make test-integration`.
+func TestUserRepository(t *testing.T) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	if _, err := (migrate.Runner{URL: url, FS: migrations.FS}).Up(ctx); err != nil {
+		t.Fatal(err)
+	}
+	db, err := kitpg.Connect(ctx, kitpg.Config{URL: url, StartupTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo, err := NewUserRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tag := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	t.Cleanup(func() {
+		_, _ = kitpg.Exec(ctx, db.Querier(ctx), `DELETE FROM users WHERE email LIKE $1`, tag+"%")
+	})
+
+	var first user.User
+	for i := range 5 {
+		role := user.RoleUser
+		if i == 0 {
+			role = user.RoleAdmin
+		}
+		u, err := repo.Create(ctx, user.User{Email: fmt.Sprintf("%s-%d@example.com", tag, i), Name: "N", PasswordHash: "h", Role: role})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			first = u
+		}
+	}
+
+	if _, err := repo.Create(ctx, user.User{Email: first.Email, Name: "dup", PasswordHash: "h", Role: user.RoleUser}); !apperr.Is(err, apperr.KindConflict) {
+		t.Fatalf("duplicate email: %v", err)
+	}
+	if got, err := repo.GetByEmail(ctx, first.Email); err != nil || got.ID != first.ID {
+		t.Fatalf("GetByEmail: %v", err)
+	}
+	if _, err := repo.GetByID(ctx, uuid.New()); !apperr.Is(err, apperr.KindNotFound) {
+		t.Fatalf("missing user: %v", err)
+	}
+
+	page, err := repo.List(ctx, query.Params{
+		Filters:  []query.Filter{{Field: "email", Op: query.OpPrefix, Values: []string{tag}}},
+		Sort:     []query.Sort{{Field: "email"}},
+		PageSize: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 2 || *page.Meta.Total != 5 || !page.Meta.HasNext || page.Items[0].PasswordHash != "" {
+		t.Fatalf("%+v", page.Meta)
+	}
+
+	admins, err := repo.List(ctx, query.Params{Filters: []query.Filter{
+		{Field: "email", Op: query.OpPrefix, Values: []string{tag}}, {Field: "role", Values: []string{"admin"}}}})
+	if err != nil || len(admins.Items) != 1 {
+		t.Fatalf("admins: %v %v", admins.Meta, err)
+	}
+	if _, err := repo.List(ctx, query.Params{Filters: []query.Filter{{Field: "password_hash", Values: []string{"h"}}}}); !apperr.Is(err, apperr.KindInvalid) {
+		t.Fatalf("password_hash must not be filterable: %v", err)
+	}
+}

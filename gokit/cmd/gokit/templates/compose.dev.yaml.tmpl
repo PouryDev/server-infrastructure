@@ -1,0 +1,65 @@
+# Local development only. Nothing in this project runs outside a container: every Go command goes
+# through the `tools` service (see the Makefile). Deployment uses deploy/compose.yaml instead.
+name: <%.Name%>-dev
+
+x-go: &go
+  image: ${GO_IMAGE:-<%.GoImage%>}
+  user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+  working_dir: /src
+  volumes:
+    - .:/src
+    - gocache:/go                       # shared module + build cache (volume ${GO_CACHE_VOLUME:-gokit-cache})
+  env_file: [.env]
+  environment:
+    HOME: /tmp
+    CGO_ENABLED: "0"
+    GOCACHE: /go/.buildcache
+    GOTOOLCHAIN: local
+    GOPROXY: ${GOPROXY:-file:///go/pkg/mod/cache/download,https://proxy.golang.org,direct}
+    GOFLAGS: ${GOFLAGS:-}
+    GOSUMDB: ${GOSUMDB:-sum.golang.org}
+
+services:
+  tools:                                # one-shot Go toolbox: test, vet, fmt, tidy, migrate...
+    <<: *go
+    profiles: [tools]
+    entrypoint: []
+    command: ["go", "version"]
+
+  api:
+    <<: *go
+    # Hot reload with air when it is installed in the cache volume, plain `go run` otherwise.
+    command: ["sh", "-c", "if command -v air >/dev/null 2>&1; then exec air -c .air.toml; else exec go run ./cmd/api; fi"]
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  redis:
+    image: ${REDIS_IMAGE:-<%.RedisImage%>}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  db:
+    image: ${DB_IMAGE:-<%.DBImage%>}
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  gocache:
+    external: true
+    name: ${GO_CACHE_VOLUME:-gokit-cache}
+  pgdata:
