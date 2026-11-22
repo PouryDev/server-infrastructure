@@ -39,7 +39,7 @@ func TestGenerateLocalKit(t *testing.T) {
 		"cmd/api/main.go", "cmd/migrate/main.go", "internal/domain/user/user.go", "internal/usecase/account/service.go",
 		"internal/adapter/postgres/user_repository.go", "internal/adapter/postgres/models.go", "internal/adapter/httpapi/router.go", "internal/bootstrap/app.go",
 		"internal/architecture_test.go", "migrations/embed.go", "migrations/20260101000000_create_users.sql",
-		".kit/go.mod", ".kit/apperr/apperr.go", "ship.conf", "README.md",
+		".kit/go.mod", ".kit/apperr/apperr.go", "ship.conf", "README.md", "deploy/grafana/README.md",
 	}
 	for _, f := range mustExist {
 		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {

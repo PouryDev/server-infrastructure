@@ -1,0 +1,11 @@
+version: "2"
+run:
+  timeout: 5m
+linters:
+  default: none
+  enable: [govet, staticcheck, unused, ineffassign, bodyclose, noctx, nilerr]
+  settings:
+    staticcheck:
+      checks: ["all", "-ST1018", "-QF1001"]
+formatters:
+  enable: [gofmt]

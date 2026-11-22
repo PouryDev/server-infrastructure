@@ -1,0 +1,21 @@
+# Build/test tools only. Running instances use the existing shared infrastructure.
+name: storefront-tools
+services:
+  tools:
+    image: ${GO_IMAGE:-docker.arvancloud.ir/library/golang:1.26-alpine}
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    working_dir: /src
+    volumes: [".:/src", "gocache:/go"]
+    env_file: [.env]
+    environment:
+      HOME: /tmp
+      CGO_ENABLED: "0"
+      GOCACHE: /go/.buildcache
+      GOTOOLCHAIN: local
+      GOPROXY: ${GOPROXY:-file:///go/pkg/mod/cache/download,https://proxy.golang.org,direct}
+    profiles: [tools]
+    command: [go, version]
+volumes:
+  gocache:
+    external: true
+    name: ${GO_CACHE_VOLUME:-gokit-cache}

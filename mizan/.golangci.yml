@@ -1,0 +1,31 @@
+version: "2"
+run:
+  timeout: 5m
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - errorlint
+    - bodyclose
+    - noctx
+    - misspell
+    - unconvert
+    - gosec
+    - nilerr
+  settings:
+    gosec:
+      excludes:
+        - G115   # integer conversions are bounded by the query package
+  exclusions:
+    rules:
+      - path: cmd/gokit/
+        linters: [gosec]   # developer tool: reads and writes files by design
+      - path: _test\.go
+        linters: [gosec, errcheck, noctx]
+formatters:
+  enable:
+    - gofmt

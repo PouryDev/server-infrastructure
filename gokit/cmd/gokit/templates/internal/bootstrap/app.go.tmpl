@@ -31,7 +31,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	fail := func(err error) error { return errors.Join(err, group.Cleanup(ctx)) }
 
 	// Cleanup runs in reverse order: the database closes first, telemetry flushes last.
-	flush, err := telemetry.Setup(ctx, telemetry.Config{ServiceName: cfg.ServiceName})
+	flush, err := telemetry.Setup(ctx, telemetry.Config{ServiceName: cfg.ServiceName, Project: "<% .Name %>"})
 	if err != nil {
 		return fail(err)
 	}

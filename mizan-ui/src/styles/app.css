@@ -1,0 +1,45 @@
+/* Additions to the design's ui.css for a real page (the design is drawn on 1440x960 artboards). */
+html,body,#root{min-height:100%}
+body{margin:0;background:var(--bg)}
+.app{min-height:100vh}
+.nav{position:sticky;top:0;align-self:flex-start;height:100vh;overflow:auto}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.app button.ng{font-family:inherit;color:inherit}
+a.tab,button.tab{font:inherit;background:none;cursor:pointer;text-decoration:none}
+.tab.on{background:var(--panel)}
+.tab u{cursor:pointer}
+.skel{animation:mzshimmer 1.4s linear infinite}
+@keyframes mzshimmer{from{background-position:200% 0}to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.skel{animation:none}}
+.toasts{position:fixed;inset-block-start:56px;inset-inline-start:16px;z-index:50;display:flex;flex-direction:column;gap:8px;width:360px;max-width:calc(100vw - 32px)}
+.scrim.fixed{position:fixed}
+.cell{height:28px;border:1px solid transparent;border-radius:3px;background:transparent;padding:0 8px;width:100%}
+.cell:hover{border-color:var(--line)}
+.cell:focus{border-color:var(--pri);background:var(--panel);box-shadow:0 0 0 2px var(--pri-bg);outline:none}
+.tbl td.ed{padding:2px 4px;height:36px}
+.tbl a{color:var(--pri)}
+.btn.link{border:0;background:none;color:var(--pri);padding:0 4px;height:auto}
+.tabs{overflow-x:auto;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}
+.tabs .tab a{color:inherit}
+.page{max-width:100%}
+.card.pad{padding:14px}
+.ro-text{padding:6px 0}
+.grid>*{min-width:0}
+.tw{max-width:100%}
+.unavailable{border-style:dashed}
+@media print{.nav,.top,.tabs,.status,.bar .btn{display:none}}
+.span2{grid-column:span 2}.span3{grid-column:span 3}@media (max-width:760px){.span2,.span3{grid-column:auto}}
+
+/* phone: the sidebar becomes a drawer opened by the menu button; layout stacks as in the design */
+.menu-btn{display:none}
+@media (max-width:760px){
+  .navwrap{flex:1 1 100% !important}
+  .navwrap[data-open="false"]{display:none !important}
+  .nav{position:static;height:auto;flex:1 1 100%;flex-direction:column;padding:0 0 12px}
+  .nav .ng{display:flex !important}
+  .nav a{height:36px}
+  .menu-btn{display:inline-flex}
+  .top{height:auto;min-height:48px;padding:6px 12px}
+  .page{padding:12px}
+  .tw{max-width:100vw}
+}

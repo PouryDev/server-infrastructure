@@ -53,9 +53,13 @@ Deliver:
 2. The project's wiring to PostgreSQL, Redis, RabbitMQ and OpenTelemetry as described in section 3
    (only the services the project actually needs), including /healthz and graceful shutdown.
 3. Proof that it works after a local deploy: `curl -s -H 'Host: api.<app>.localhost' http://127.0.0.1/healthz`
-   returns 200, and a request produces a trace visible in Grafana (Explore, data source Tempo; admin password:
-   GRAFANA_ADMIN_PASSWORD in <infra repo path>/.env, Grafana on http://localhost:3000).
-4. The AGENTS.md checklist with each item marked done / not applicable.
+   returns 200, and a request produces a trace visible in Grafana (Explore, data source "Tempo (all projects)"; admin password:
+   GRAFANA_ADMIN_PASSWORD in <infra repo path>/.env, Grafana on http://localhost:3000; the project's own org is
+   reachable from the "Projects" dashboard).
+4. Only if the project has its own business metrics: the metrics (OpenTelemetry meter, bounded attributes) and a dashboard
+   in deploy/grafana/<purpose>.json, per "Dashboards and your own metrics" in AGENTS.md. `python3 scripts/grafana-lint.py
+   deploy/grafana` must pass. Do NOT run the import yourself; tell me the `make project-dashboards-import ...` command.
+5. The AGENTS.md checklist with each item marked done / not applicable.
 
 Tell me about anything in AGENTS.md that is wrong, missing or ambiguous instead of working around it silently.
 ```

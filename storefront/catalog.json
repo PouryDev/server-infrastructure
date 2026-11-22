@@ -1,0 +1,158 @@
+{
+  "themes": [
+    {
+      "id": "catalog",
+      "name": "کلاسیک",
+      "category": "رسمی · کاتالوگ ساختاریافته",
+      "layout": "formal",
+      "accent": "#17655d",
+      "background": "#f6f7f9"
+    },
+    {
+      "id": "orbit",
+      "name": "اوربیت",
+      "category": "استارتاپی · کارت‌های شناور",
+      "layout": "startup",
+      "accent": "#6040b0",
+      "background": "#f5f3fc"
+    },
+    {
+      "id": "pulse",
+      "name": "پالس",
+      "category": "پویا · حرکت و تعامل",
+      "layout": "motion",
+      "accent": "#b52742",
+      "background": "#fff7f8"
+    },
+    {
+      "id": "mono",
+      "name": "مونو",
+      "category": "مینیمال · محصولمحور",
+      "layout": "minimal-shop",
+      "accent": "#252525",
+      "background": "#fafafa"
+    },
+    {
+      "id": "bazaar",
+      "name": "بازار",
+      "category": "مارکت‌پلیس · خرید سریع",
+      "layout": "marketplace",
+      "accent": "#b93b21",
+      "background": "#fff8f4"
+    },
+    {
+      "id": "street",
+      "name": "بروت",
+      "category": "جسور · تایپوگرافی و خطوط",
+      "layout": "brutalist",
+      "accent": "#4844a8",
+      "background": "#f3f3fc"
+    },
+    {
+      "id": "atelier",
+      "name": "آتلیه",
+      "category": "لوکس · ویترین گزیده",
+      "layout": "luxury",
+      "accent": "#855137",
+      "background": "#faf7f4"
+    },
+    {
+      "id": "play",
+      "name": "پلی",
+      "category": "بازیگوش · فرم‌های نرم",
+      "layout": "playful",
+      "accent": "#276d59",
+      "background": "#f6faf7"
+    },
+    {
+      "id": "journal",
+      "name": "ژورنال",
+      "category": "مجله‌ای · کشف و خرید",
+      "layout": "editorial-shop",
+      "accent": "#94412e",
+      "background": "#fcfaf6"
+    },
+    {
+      "id": "terminal",
+      "name": "ترمینال",
+      "category": "فنی · مشخصات و مقایسه",
+      "layout": "terminal",
+      "accent": "#23715c",
+      "background": "#f1f7f5"
+    },
+    {
+      "id": "mode",
+      "name": "مد",
+      "category": "پوشاک · ویترین تمام‌عرض",
+      "layout": "fashion",
+      "accent": "#963344",
+      "background": "#fff9fa"
+    },
+    {
+      "id": "bloom",
+      "name": "بلوم",
+      "category": "زیبایی · فرم‌های نرم",
+      "layout": "beauty",
+      "accent": "#8b376b",
+      "background": "#fff6fb"
+    },
+    {
+      "id": "volt",
+      "name": "ولت",
+      "category": "دیجیتال · مشخصات فنی",
+      "layout": "electronics",
+      "accent": "#2855bc",
+      "background": "#f3f6fd"
+    },
+    {
+      "id": "fresh",
+      "name": "فرش",
+      "category": "سوپرمارکت · خرید روزانه",
+      "layout": "grocery",
+      "accent": "#23633a",
+      "background": "#f5faf4"
+    },
+    {
+      "id": "little",
+      "name": "لیتل",
+      "category": "کودک · رنگ و بازی",
+      "layout": "kids",
+      "accent": "#6445a2",
+      "background": "#faf7ff"
+    },
+    {
+      "id": "craft",
+      "name": "کرافت",
+      "category": "دست‌ساز · داستان محصول",
+      "layout": "artisan",
+      "accent": "#805233",
+      "background": "#faf7f2"
+    }
+  ],
+  "modules": [
+    {
+      "id": "blog",
+      "name": "وبلاگ"
+    },
+    {
+      "id": "attachments",
+      "name": "پیوست سفارش"
+    },
+    {
+      "id": "discounts",
+      "name": "تخفیف و کمپین"
+    },
+    {
+      "id": "wishlist",
+      "name": "علاقه‌مندی"
+    },
+    {
+      "id": "support",
+      "name": "پشتیبانی گپچی"
+    },
+    {
+      "id": "analytics",
+      "name": "آنالیتیکس"
+    }
+  ]
+}

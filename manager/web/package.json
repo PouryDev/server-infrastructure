@@ -1,0 +1,28 @@
+{
+  "name": "infra-manager-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fontsource/vazirmatn": "5.2.5",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "lucide-react": "0.468.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.5",
+    "@types/react-dom": "19.1.5",
+    "@vitejs/plugin-react": "4.5.0",
+    "typescript": "5.8.3",
+    "vite": "6.3.5",
+    "vitest": "3.1.4",
+    "jsdom": "26.1.0",
+    "@testing-library/react": "16.3.0",
+    "@testing-library/jest-dom": "6.6.3",
+    "@testing-library/user-event": "14.6.1"
+  }
+}

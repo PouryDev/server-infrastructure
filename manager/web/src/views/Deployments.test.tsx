@@ -1,0 +1,35 @@
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { Deployments } from "./Deployments";
+import { request } from "../api";
+vi.mock("../api", () => ({ request: vi.fn(), APIError: class APIError extends Error { status = 0; } }));
+const mocked = vi.mocked(request);
+const project = { name: "testapp", domain: "app.example.com", service: "testapp-api", port: 8080, migrationService: "", packageID: "package-one", revision: "rev-one", services: ["testapp-api"], images: ["testapp-api:sha-one"], envKeys: ["PASSWORD"], provisioned: true, deployed: true, configured: true };
+const catalog = { projects: [project], jobs: [], appsDir: "/srv/apps", dataDir: "/srv/data", maxUploadBytes: 2 ** 31 };
+afterEach(cleanup);
+beforeEach(() => { mocked.mockReset(); mocked.mockImplementation(async path => path === "/deployments/catalog" ? catalog : { id: "job-one", status: "queued" }); });
+it("reuses the destination domain and hides env values; saving sends only intentional edits with revision and CSRF", async () => {
+  render(<Deployments csrf="csrf-one" onUnauthorized={vi.fn()}/>);
+  fireEvent.change(await screen.findByLabelText("انتخاب پروژه برای دیپلوی"), { target: { value: "testapp" } });
+  expect(screen.getByLabelText("دامنهٔ پروژه")).toHaveValue("app.example.com");
+  expect(screen.getByText(/محدودیت‌های فعلی کانتینرهای مقصد/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "افزودن یا تغییر متغیر" }));
+  fireEvent.change(screen.getByLabelText("نام متغیر 1"), { target: { value: "PASSWORD" } });
+  fireEvent.change(screen.getByLabelText("مقدار متغیر 1"), { target: { value: "new$secret" } });
+  expect(screen.getByLabelText("مقدار متغیر 1")).toHaveAttribute("type", "password");
+  expect(screen.getByRole("button", { name: "دیپلوی نسخهٔ ذخیره‌شده" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "ذخیرهٔ دامنه و env مقصد" }));
+  await waitFor(() => expect(mocked).toHaveBeenCalledWith("/deployments/save", expect.anything(), "csrf-one"));
+  const call = mocked.mock.calls.find(([path]) => path === "/deployments/save")!;
+  expect(JSON.parse(call[1]!.body as string)).toMatchObject({ name: "testapp", domain: "app.example.com", revision: "rev-one", environment: { PASSWORD: "new$secret" } });
+});
+it("requires an explicit reviewed confirmation before deploying the saved project", async () => {
+  render(<Deployments csrf="csrf-one" onUnauthorized={vi.fn()}/>);
+  fireEvent.change(await screen.findByLabelText("انتخاب پروژه برای دیپلوی"), { target: { value: "testapp" } });
+  fireEvent.click(screen.getByRole("button", { name: "دیپلوی نسخهٔ ذخیره‌شده" }));
+  expect(mocked.mock.calls.some(([path]) => path === "/deployments/deploy")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "تأیید و دیپلوی پروژه" }));
+  await waitFor(() => expect(mocked).toHaveBeenCalledWith("/deployments/deploy", expect.anything(), "csrf-one"));
+  const call = mocked.mock.calls.find(([path]) => path === "/deployments/deploy")!;
+  expect(JSON.parse(call[1]!.body as string)).toMatchObject({ name: "testapp", revision: "rev-one" });
+});

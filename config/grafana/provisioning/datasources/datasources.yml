@@ -1,5 +1,10 @@
 apiVersion: 1
 
+# The Tempo source used to be called `Tempo`; renaming it needs the old record removed first (org 1 only, project orgs are untouched).
+deleteDatasources:
+  - name: Tempo
+    orgId: 1
+
 datasources:
   - name: Prometheus
     uid: prometheus
@@ -11,15 +16,30 @@ datasources:
       timeInterval: 30s
       exemplarTraceIdDestinations:
         - name: trace_id
-          datasourceUid: tempo
+          datasourceUid: tempo-all  # created by scripts/project-access.py (all tenants)
 
-  - name: Tempo
+  # Containers and uptime probes. Same uid in every project org, where it points at the label proxy instead
+  # (scripts/project-access.py), so one dashboard JSON works in the admin org and in a project org.
+  - name: Prometheus (containers & uptime)
+    uid: prometheus-infra
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    jsonData:
+      timeInterval: 30s
+
+  # Tempo is multi-tenant. This one reads tenant single-tenant (spans of a service with no project). The project traces are in
+  # `Tempo (all projects)` (uid tempo-all) and in each project org's own `tempo`; both are created by scripts/project-access.py.
+  - name: Tempo (spans without a project)
     uid: tempo
     type: tempo
     access: proxy
     url: http://tempo:3200
     jsonData:
+      httpHeaderName1: X-Scope-OrgID
       nodeGraph: { enabled: true }
+    secureJsonData:
+      httpHeaderValue1: single-tenant
 
   - name: Alertmanager
     uid: alertmanager

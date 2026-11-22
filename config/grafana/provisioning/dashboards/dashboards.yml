@@ -9,3 +9,4 @@ providers:
     updateIntervalSeconds: 60
     options:
       path: /var/lib/grafana-dashboards
+

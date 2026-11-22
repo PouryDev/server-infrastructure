@@ -32,6 +32,11 @@ type Config struct {
 	// ServiceName is used when OTEL_SERVICE_NAME is not set.
 	ServiceName    string
 	ServiceVersion string
+	// Project groups every service of one product (api, worker, scheduler, ...). It becomes the
+	// service.namespace resource attribute, which Prometheus turns into job="<project>/<service>"; the
+	// "Project overview" Grafana dashboard builds its project picker from that, so a new project shows
+	// up there with no dashboard work. OTEL_RESOURCE_ATTRIBUTES=service.namespace=... overrides it.
+	Project string
 	// MetricInterval is the export period. Default: OTEL_METRIC_EXPORT_INTERVAL if set, else 30s (the
 	// infrastructure docs suggest 30s).
 	MetricInterval time.Duration
@@ -115,6 +120,9 @@ func defaultAttrs(cfg Config) []attribute.KeyValue {
 	var attrs []attribute.KeyValue
 	if cfg.ServiceName != "" {
 		attrs = append(attrs, semconv.ServiceName(cfg.ServiceName))
+	}
+	if cfg.Project != "" {
+		attrs = append(attrs, semconv.ServiceNamespace(cfg.Project))
 	}
 	if cfg.ServiceVersion != "" {
 		attrs = append(attrs, semconv.ServiceVersion(cfg.ServiceVersion))

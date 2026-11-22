@@ -32,7 +32,7 @@ Every package depends only on the standard library and the small packages below 
 | `migrate` | goose runner over an embedded FS: no session advisory locks, simple protocol, `Up` / `Down` / `Status` / `Create`. Run it as a one-shot command. |
 | `auth` | Stateless JWT (optionally **revocable**, see below) (`HS256` or `Ed25519`, `kid`-based key rotation, access + refresh tokens, algorithm pinning, verify-only services) and argon2id password hashing that upgrades itself. Interfaces `TokenVerifier`, `SessionIssuer`, `PasswordHasher` for use cases. |
 | `httpx` | Router on `net/http` with middleware groups, `HandlerFunc` returning errors, `Decode[T]` (strict JSON), uniform error body, request id, access log with `trace_id`, panic recovery, CORS, body limit, `Authenticate` / `RequireRoles`, `/healthz` + `/readyz`, server with graceful shutdown. |
-| `telemetry` | OTLP traces + metrics following the infra contract (env driven, always-on parent-based sampling, W3C propagation, 30 s metric export, flush on shutdown). No endpoint = disabled. |
+| `telemetry` | OTLP traces + metrics following the infra contract (env driven, always-on parent-based sampling, W3C propagation, 30 s metric export, flush on shutdown). No endpoint = disabled. `Config.Project` sets `service.namespace`, which groups a project's services; the infrastructure gives the project its own Grafana org with data filtered to it. |
 | `logging` | `slog` JSON logger that adds `trace_id` / `span_id`. |
 | `config` | Typed env loader that reports every problem at once. |
 | `retry`, `lifecycle` | Exponential backoff with jitter; runners + LIFO cleanup with signal handling. |

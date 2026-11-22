@@ -2,4 +2,23 @@
 # scripts/new-project.sh appends entries here. Format:
 # - targets: ["https://app.example.com/"]
 #   labels: { project: myapp }
-[]
+- targets: ["https://reels-chi.localhost/"]
+  labels: { project: reels-chi, kind: client }
+- targets: ["https://gapchi.localhost/"]
+  labels: { project: gapchi, kind: client }
+- targets: ["https://gapchi.localhost/api/healthz"]
+  labels: { project: gapchi, kind: api }
+- targets: ["https://bodyai.localhost/"]
+  labels: { project: bodyai, kind: client }
+- targets: ["https://bodyai.localhost/api/healthz"]
+  labels: { project: bodyai, kind: api }
+- targets: ["https://vetrix.localhost/"]
+  labels: { project: vetrix, kind: client }
+- targets: ["https://vetrix.localhost/api/healthz"]
+  labels: { project: vetrix, kind: api }
+
+# Local stack: probe the shared nginx from the isolated monitoring network.
+- targets: ["http://nginx/"]
+  labels: { project: kasbnava, kind: client, probe_module: kasbnava_local }
+- targets: ["http://nginx/api/healthz"]
+  labels: { project: kasbnava, kind: api, probe_module: kasbnava_local }

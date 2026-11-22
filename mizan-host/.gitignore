@@ -1,0 +1,8 @@
+.env
+tmp/
+vendor/
+bin/
+*.log
+.admin-password
+web/*
+!web/.gitkeep

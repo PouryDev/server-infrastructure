@@ -12,12 +12,17 @@ name: infra
 
 x-base: &base
   restart: unless-stopped
+  labels:
+    infra.manager.managed: "false"
   security_opt: ["no-new-privileges:true"]
   logging:
     driver: json-file
     options: { max-size: "10m", max-file: "3" }
 
 networks:
+  manager-egress:
+  manager-control:
+    internal: true
   infra:
     name: infra
   data:
@@ -29,7 +34,227 @@ networks:
         - subnet: 10.99.250.0/24
           gateway: 10.99.250.1
 
+volumes:
+  storefront-jobs:
+  manager-data:
+  xray-data:
+
 services:
+  # Standalone React/Go project. Build via make manager-image / manager/Makefile.
+  manager:
+    <<: *base
+    image: infra-manager:local
+    build: { context: ./manager, target: app }
+    env_file: [./manager/.env]
+    environment:
+      MANAGER_ORIGIN: ${MANAGER_ORIGIN:-http://manager.localhost}
+      MANAGER_SECURE_COOKIE: ${MANAGER_SECURE_COOKIE:-false}
+      MANAGER_GATEWAY_URL: http://manager-runtime:8080
+      MANAGER_PROMETHEUS_URL: http://prometheus:9090
+      MANAGER_SHIPPER_URL: http://manager-shipper:8080
+      MANAGER_RESOURCES_URL: http://manager-resources:8080
+      MANAGER_BUILDER_URL: http://manager-builder:8080
+      MANAGER_STOREFRONT_URL: http://manager-storefront:8080
+      MANAGER_VPN_URL: http://xray:8080
+      GOMEMLIMIT: 112MiB
+    volumes:
+      - manager-data:/data
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    mem_limit: 160m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "/manager", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      manager-runtime: { condition: service_healthy }
+      manager-shipper: { condition: service_healthy }
+      manager-resources: { condition: service_healthy }
+      xray: { condition: service_healthy }
+    networks: [infra, monitoring, manager-control]
+
+  # Private outbound VPN. Only HTTP/SOCKS are bound to host loopback; control API
+  # stays inside Docker and requires the manager broker token. No host routing changes.
+  xray:
+    <<: *base
+    image: infra-manager-vpn:local
+    build:
+      context: ./manager
+      target: vpn
+      args:
+        XRAY_IMAGE: ${XRAY_IMAGE:-ghcr.io/xtls/xray-core:26.10.31}
+    env_file: [./manager/.env]
+    environment:
+      GOMEMLIMIT: 96MiB
+    volumes:
+      - xray-data:/data
+    ports:
+      - "127.0.0.1:${XRAY_SOCKS_PORT:-10808}:10808"
+      - "127.0.0.1:${XRAY_HTTP_PORT:-10809}:10809"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    mem_limit: 256m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "/manager", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks: [infra, manager-control, manager-egress]
+
+  # Only this narrowly scoped broker can access the Docker socket. It is never
+  # published, never joins the shared infra network, and rejects infra mutations.
+  manager-runtime:
+    <<: *base
+    image: infra-manager:local
+    build: { context: ./manager, target: app }
+    command: [gateway]
+    user: "0:0"
+    env_file: [./manager/.env]
+    environment:
+      GOMEMLIMIT: 80MiB
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    mem_limit: 112m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "/manager", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks: [manager-control]
+
+  # Explicit resource-only broker. Push is disabled unless configured by the owner.
+  manager-resources:
+    <<: *base
+    image: infra-manager-resources:local
+    build: { context: ./manager, target: resources }
+    env_file: [./manager/.env]
+    environment:
+      MANAGER_RESOURCE_PUSH_ENABLED: ${MANAGER_RESOURCE_PUSH_ENABLED:-false}
+      MANAGER_RESOURCE_SOURCES: ${MANAGER_RESOURCE_SOURCES:-}
+      GOMEMLIMIT: 112MiB
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - .:/source/infra
+      - ${APPS_DIR}:/source/apps
+      - ./manager/resource-ssh:/keys:ro
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE, CHOWN, FOWNER]
+    mem_limit: 192m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "/manager", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks: [manager-control, manager-egress]
+
+  # Shipping has its own bounded runner; API/web never receive SSH keys/socket.
+  manager-shipper:
+    <<: *base
+    image: infra-manager-shipper:local
+    build: { context: ./manager, target: shipper }
+    env_file: [./manager/.env]
+    environment:
+      TMPDIR: /tmp/shipper
+      MANAGER_HOST_INFRA: ${PWD}
+      MANAGER_HOST_APPS: ${APPS_DIR}
+      MANAGER_HOST_DATA: ${DATA_DIR}
+      # Registered local build sources (JSON, from the ignored manager/builder.local.yaml).
+      MANAGER_BUILD_SOURCES: ${MANAGER_BUILD_SOURCES:-}
+      GOMEMLIMIT: 320MiB
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - .:/source/infra:ro
+      - ${APPS_DIR}:/source/apps:ro
+      - ./manager/ssh:/keys:ro
+      - /tmp/infra-manager-target:/tmp/infra-manager-target
+    read_only: true
+    tmpfs: [/tmp/shipper, /run]
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE]
+    mem_limit: 448m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "/manager", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks: [manager-control, manager-egress]
+
+  # Local image builder (profile "build"). It has the Docker socket and READ-ONLY mounts of the
+  # project sources you register in the ignored manager/builder.local.yaml; no SSH keys and no
+  # destination access. Start it only on the machine that holds the sources.
+  manager-builder:
+    <<: *base
+    profiles: [build]
+    image: infra-manager-builder:local
+    build: { context: ./manager, target: builder }
+    env_file: [./manager/.env]
+    environment:
+      MANAGER_BUILD_SOURCES: ${MANAGER_BUILD_SOURCES:-}
+      MANAGER_BUILD_PROXY: ${MANAGER_BUILD_PROXY:-}
+      # Buildx writes client state; the root filesystem stays read-only.
+      DOCKER_CONFIG: /tmp/docker
+      GOMEMLIMIT: 112MiB
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE]
+    mem_limit: 192m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "/manager", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks: [manager-control]
+
+  # Narrow same-host storefront provisioner. The manager web container has no Docker access.
+  manager-storefront:
+    <<: *base
+    image: infra-storefront-provisioner:local
+    build: { context: ., dockerfile: storefront/provisioner.Dockerfile }
+    env_file: [./manager/.env]
+    environment:
+      STOREFRONT_INFRA_ROOT: ${PWD}
+      STOREFRONT_APPS_ROOT: ${APPS_DIR}
+    volumes:
+      - .:/infra:ro
+      - .:${PWD}:ro
+      - ./config/nginx/conf.d:${PWD}/config/nginx/conf.d
+      - ${APPS_DIR}:${APPS_DIR}
+      - ${DATA_DIR}/apps:${DATA_DIR}/apps
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - storefront-jobs:/data
+    read_only: true
+    tmpfs: [/tmp]
+    user: "0:0"
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE]
+    mem_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks: [manager-control, manager-egress]
+
   # ===========================================================================
   # Data
   # ===========================================================================
@@ -203,18 +428,20 @@ services:
   otel-collector:
     <<: *base
     image: ${REGISTRY}/otel/opentelemetry-collector-contrib:0.164.0
-    command: ["--config=/etc/otelcol/config.yaml"]
+    command: ["--config=/etc/otelcol/config.yaml", "--config=/etc/otelcol/tenants.yaml"]
     environment:
       GOMEMLIMIT: 220MiB
       TRACE_SAMPLE_PERCENT: ${TRACE_SAMPLE_PERCENT:-25}
     volumes:
       - ./config/otel/collector.yaml:/etc/otelcol/config.yaml:ro
+      - ./config/otel/tenants.yaml:/etc/otelcol/tenants.yaml:ro
     read_only: true
     mem_limit: 256m
     cpus: 1.0
     cap_drop: [ALL]
     networks: [infra, monitoring]
 
+  # multi-tenant (config/tempo/tempo.yaml): one tenant per project, see config/otel/tenants.yaml
   tempo:
     <<: *base
     image: ${REGISTRY}/grafana/tempo:3.1.1
@@ -257,6 +484,34 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+    networks: [monitoring]
+
+  # Per-project data isolation for Grafana. Each project has its own Grafana ORG whose only Prometheus data
+  # source points at one of these proxies with a secret header (X-Tenant: "<project>/.*" or "<project>"); the proxy
+  # ANDs `job` (apps) or `project` (containers, uptime probes) into every query and label API of that org, so a
+  # project login cannot read another project's metrics, not even with a hand-written query in Explore.
+  label-proxy-job:
+    <<: *base
+    image: ${LABEL_PROXY_IMAGE:-quay.io/prometheuscommunity/prom-label-proxy:v0.11.1}
+    command: [-insecure-listen-address=0.0.0.0:9091, -upstream=http://prometheus:9090, -label=job, -header-name=X-Tenant, -regex-match, -enable-label-apis]
+    depends_on:
+      prometheus: { condition: service_healthy }
+    read_only: true
+    mem_limit: 48m
+    cpus: 0.25
+    cap_drop: [ALL]
+    networks: [monitoring]
+
+  label-proxy-project:
+    <<: *base
+    image: ${LABEL_PROXY_IMAGE:-quay.io/prometheuscommunity/prom-label-proxy:v0.11.1}
+    command: [-insecure-listen-address=0.0.0.0:9091, -upstream=http://prometheus:9090, -label=project, -header-name=X-Tenant, -regex-match, -enable-label-apis]
+    depends_on:
+      prometheus: { condition: service_healthy }
+    read_only: true
+    mem_limit: 48m
+    cpus: 0.25
+    cap_drop: [ALL]
     networks: [monitoring]
 
   alertmanager:

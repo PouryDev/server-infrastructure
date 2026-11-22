@@ -1,0 +1,249 @@
+{
+ "uid": "p-bodyai-custom",
+ "title": "bodyai / Custom metrics",
+ "tags": [
+  "project-bodyai",
+  "generated",
+  "otel"
+ ],
+ "schemaVersion": 39,
+ "version": 1,
+ "editable": false,
+ "refresh": "30s",
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "panels": [
+  {
+   "id": 1,
+   "type": "text",
+   "title": "",
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 3
+   },
+   "options": {
+    "mode": "markdown",
+    "content": "**Your own metrics.** Everything the project exports through OpenTelemetry that is not part of the standard set (HTTP, database, notify, Go runtime) is listed here. Pick metrics in the **Metric** box to plot them. To keep a view, build your own dashboard in this folder (New dashboard; Grafana saves it here), or commit JSON to the project's `deploy/grafana/` and run `make project-dashboards-import`."
+   }
+  },
+  {
+   "id": 2,
+   "type": "table",
+   "title": "Custom metrics of this project",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 3,
+    "w": 24,
+    "h": 10
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "count by (__name__, job) ({job=~\"$service\",__name__!~\"http_.*|db_.*|go_.*|process_.*|notify_.*|target_info|otel_.*|scrape_.*|up|probe_.*\"})",
+     "legendFormat": "",
+     "instant": true,
+     "range": false,
+     "format": "table"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "transformations": [
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {
+       "Time": true
+      },
+      "renameByName": {
+       "__name__": "Metric",
+       "job": "Service",
+       "Value": "series"
+      }
+     }
+    }
+   ],
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "displayName": "Value",
+      "desc": true
+     }
+    ]
+   }
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "Selected metrics (raw)",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 13,
+    "w": 12,
+    "h": 9
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "{job=~\"$service\",__name__=~\"$metric\"}",
+     "legendFormat": ""
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "custom": {
+      "fillOpacity": 8,
+      "lineWidth": 1,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 4,
+   "type": "timeseries",
+   "title": "Selected metrics (rate / s, for counters)",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 13,
+    "w": 12,
+    "h": 9
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "rate({job=~\"$service\",__name__=~\"$metric\"}[5m])",
+     "legendFormat": ""
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "custom": {
+      "fillOpacity": 8,
+      "lineWidth": 1,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  }
+ ],
+ "templating": {
+  "list": [
+   {
+    "name": "service",
+    "label": "Service",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "prometheus"
+    },
+    "query": {
+     "query": "label_values(target_info{instance=\"\",job=~\"bodyai(/.*)?\"}, job)",
+     "refId": "v"
+    },
+    "refresh": 2,
+    "sort": 1,
+    "regex": "",
+    "multi": true,
+    "includeAll": true,
+    "allValue": ".*"
+   },
+   {
+    "name": "metric",
+    "label": "Metric",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "prometheus"
+    },
+    "query": {
+     "query": "label_values({instance=\"\",job=~\"bodyai(/.*)?\",__name__!~\"http_.*|db_.*|go_.*|process_.*|notify_.*|target_info|otel_.*|scrape_.*|up|probe_.*\"}, __name__)",
+     "refId": "v"
+    },
+    "refresh": 2,
+    "sort": 1,
+    "regex": "",
+    "multi": true,
+    "includeAll": false,
+    "allValue": "NOMATCH_SELECT_A_METRIC"
+   }
+  ]
+ },
+ "annotations": {
+  "list": []
+ },
+ "links": [
+  {
+   "type": "dashboards",
+   "title": "bodyai dashboards",
+   "tags": [
+    "project-bodyai"
+   ],
+   "asDropdown": true,
+   "includeVars": false,
+   "keepTime": true,
+   "icon": "external link"
+  }
+ ]
+}

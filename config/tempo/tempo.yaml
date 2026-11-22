@@ -1,6 +1,12 @@
 # Tempo 3.x, single binary (-target=all), local disk. No Kafka needed in this mode.
 stream_over_http_enabled: true
 
+# One tenant per project (the collector routes by service.namespace, see config/otel/tenants.yaml); Grafana org data sources send
+# X-Scope-OrgID. Spans without a project land in tenant "single-tenant".
+multitenancy_enabled: true
+query_frontend:
+  multi_tenant_queries_enabled: true  # the admin data source reads "a|b|c"
+
 server:
   http_listen_port: 3200
   log_level: warn

@@ -1,0 +1,43 @@
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { VPN } from "./VPN";
+import { request } from "../api";
+vi.mock("../api", () => ({ request: vi.fn(), APIError: class extends Error { status = 0; } }));
+const mocked = vi.mocked(request);
+const saved = { configured: true, enabled: true, running: true, protocol: "vless", server: "vpn.example:443", revision: "a".repeat(64) };
+afterEach(cleanup);
+beforeEach(() => mocked.mockReset());
+it("imports a secret link, clears it on success and tests the proxy with CSRF", async () => {
+  mocked.mockImplementation(async () => saved);
+  render(<VPN csrf="csrf-test" onUnauthorized={vi.fn()} />);
+  const save = await screen.findByRole("button", { name: "ذخیره و اعمال" });
+  await waitFor(() => expect(save).toBeEnabled());
+  const input = screen.getByLabelText("لینک اتصال VPN");
+  expect(input).toHaveAttribute("type", "password");
+  fireEvent.change(input, { target: { value: "vless://private-link" } });
+  fireEvent.click(save);
+  await waitFor(() => expect(mocked).toHaveBeenCalledWith("/vpn", { method: "PUT", body: JSON.stringify({ link: "vless://private-link", enabled: true, revision: saved.revision }) }, "csrf-test"));
+  await waitFor(() => expect(input).toHaveValue(""));
+  fireEvent.click(screen.getByRole("button", { name: "تست اتصال VPN" }));
+  await screen.findByText(/تست موفق بود/);
+  expect(mocked).toHaveBeenCalledWith("/vpn/test", { method: "POST" }, "csrf-test");
+});
+it("disables the saved connection without needing its secret link again", async () => {
+  mocked.mockImplementation(async () => saved);
+  render(<VPN csrf="csrf-test" onUnauthorized={vi.fn()} />);
+  const toggle = screen.getByRole("checkbox", { name: "فعال بودن اتصال" });
+  await waitFor(() => expect(toggle).toBeEnabled());
+  fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole("button", { name: "ذخیره و اعمال" }));
+  await waitFor(() => expect(mocked).toHaveBeenCalledWith("/vpn", { method: "PUT", body: JSON.stringify({ link: "", enabled: false, revision: saved.revision }) }, "csrf-test"));
+});
+it("retains an edited link after a failed save and shows the failure", async () => {
+  mocked.mockImplementation(async (_path, init) => { if (init?.method === "PUT") throw new Error("اتصال ناموفق"); return saved; });
+  render(<VPN csrf="csrf-test" onUnauthorized={vi.fn()} />);
+  const input = screen.getByLabelText("لینک اتصال VPN");
+  await waitFor(() => expect(input).toBeEnabled());
+  fireEvent.change(input, { target: { value: "vless://private-link" } });
+  fireEvent.click(screen.getByRole("button", { name: "ذخیره و اعمال" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("اتصال ناموفق");
+  expect(input).toHaveValue("vless://private-link");
+});

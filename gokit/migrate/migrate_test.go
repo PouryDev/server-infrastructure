@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,16 @@ func TestCreate(t *testing.T) {
 	for _, bad := range []string{"", "../x", "with space", "1abc", "a-b"} {
 		if _, err := Create(dir, bad, time.Now()); err == nil {
 			t.Errorf("%q must be rejected", bad)
+		}
+	}
+}
+
+func TestTableNameIsValidated(t *testing.T) {
+	r := Runner{URL: "postgres://x/y", FS: os.DirFS(t.TempDir())}
+	for _, bad := range []string{"a;drop table x", "Upper", "with space", "1abc", `a"b`} {
+		r.Table = bad
+		if _, err := r.Up(context.Background()); err == nil || !strings.Contains(err.Error(), "table name") {
+			t.Errorf("table %q must be rejected before touching the database, got %v", bad, err)
 		}
 	}
 }

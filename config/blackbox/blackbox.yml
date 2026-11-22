@@ -7,3 +7,14 @@ modules:
       follow_redirects: true
       preferred_ip_protocol: ip4
       ip_protocol_fallback: false
+
+  kasbnava_local:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      follow_redirects: true
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: false
+      headers:
+        Host: kasbnava.localhost

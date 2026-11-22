@@ -24,6 +24,11 @@ scrape_configs:
   - job_name: cadvisor
     static_configs: [{ targets: ["cadvisor:8080"] }]
     metric_relabel_configs:
+      # `project` = the compose project, so per-project Grafana orgs can be restricted to their own containers
+      # (the same label the uptime probes carry from targets/http-probes.yml).
+      - source_labels: [container_label_com_docker_compose_project]
+        regex: (.+)
+        target_label: project
       - source_labels: [__name__]
         regex: container_(tasks_state|memory_failures_total|fs_inodes_total|fs_inodes_free|network_(receive|transmit)_packets_dropped_total)
         action: drop
@@ -36,6 +41,15 @@ scrape_configs:
 
   - job_name: rabbitmq
     static_configs: [{ targets: ["rabbitmq:15692"] }]
+
+  # Per-vhost attribution for the manager; the default endpoint is aggregated.
+  - job_name: rabbitmq-projects
+    metrics_path: /metrics/per-object
+    static_configs: [{ targets: ["rabbitmq:15692"] }]
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: rabbitmq_queue_(messages|process_memory_bytes)
+        action: keep
 
   - job_name: nginx
     static_configs: [{ targets: ["nginx-exporter:9113"] }]
@@ -67,5 +81,8 @@ scrape_configs:
         target_label: __param_target
       - source_labels: [__param_target]
         target_label: instance
+      - source_labels: [probe_module]
+        regex: "(.+)"
+        target_label: __param_module
       - target_label: __address__
         replacement: blackbox:9115

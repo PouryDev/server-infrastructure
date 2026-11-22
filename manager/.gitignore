@@ -1,0 +1,12 @@
+/web/node_modules/
+/web/dist/
+/bin/
+/vendor/
+.env
+/ssh/
+*.db*
+
+/resource-ssh/
+
+/resources.local.yaml
+/builder.local.yaml

@@ -1,6 +1,6 @@
 ---
 name: server-infra
-description: Use when deploying a project on the shared server or connecting it to the shared infrastructure (compose file, ship.conf, PostgreSQL via PgBouncer, Redis, RabbitMQ, OpenTelemetry, nginx behind the CDN, health checks). Defines how a project plugs into the infrastructure, not how the project itself is built.
+description: Use when deploying a project on the shared server or connecting it to the shared infrastructure (compose file, ship.conf, PostgreSQL via PgBouncer, Redis, RabbitMQ, OpenTelemetry, nginx behind the CDN, health checks), and when adding the project's own metrics or Grafana dashboards (OpenTelemetry meter, deploy/grafana/*.json, scripts/grafana-lint.py, the project's isolated Grafana org, traces). Defines how a project plugs into the infrastructure, not how the project itself is built.
 ---
 
 # Connecting a project to the shared server infrastructure
@@ -136,7 +136,44 @@ Set `OTEL_SERVICE_NAME` per service in the compose file.
   is built on it. Use bounded label values only (no user IDs, no raw URLs with IDs, no raw errors).
 * Metrics are exported periodically (30 s suggested). Flush telemetry on shutdown.
 * Put the trace id in the logs so a log line can be matched to its trace in Grafana (optional but advised).
-* Traces are viewed in Grafana (Explore, data source Tempo); retention is 3 days. Metrics 10 days.
+* Set `service.namespace` to the project name (`OTEL_RESOURCE_ATTRIBUTES=service.namespace=<app>`, already in the generated `.env`). It is how every
+  metric and trace is attributed to the project: Prometheus labels it `job="<app>/<service>"` and traces go to the Tempo tenant `<app>`.
+  Without it the project's traces land in a shared tenant nobody but the infra owner can see.
+* Traces are viewed in the project's Grafana org (dashboard "Traces & latency") or by the infra owner in Explore; retention is 3 days. Metrics 10 days.
+  Server spans should be named `METHOD /route-template` (not the raw URL): the dashboard groups requests by span name.
+
+### Dashboards and your own metrics (Grafana)
+
+Every project gets its **own Grafana org** and the infra owner generates its dashboards (Overview, HTTP API, Database, Notifications, Go runtime,
+Containers & uptime, Traces & latency, Custom metrics). The org only sees this project's data (enforced below Grafana, not by dashboard filters).
+You do not build those. You add **your own** metrics and dashboards for what is specific to the project (orders, jobs, business events).
+
+**Your own metrics** (OpenTelemetry meter, the same OTLP path; no `/metrics` endpoint, no Prometheus client, no push gateway):
+
+* Go: `m := otel.Meter("<app>")` then `m.Int64Counter("orders.created", metric.WithUnit("{order}"))`, `m.Float64Histogram("orders.processing.duration", metric.WithUnit("s"))`,
+  `m.Int64ObservableGauge(...)` for values you sample (queue depth). Create instruments once at startup. Other languages: the same API of their OTel SDK.
+* Names are lowercase `noun.verb` with dots; put the unit in the option, not the name. Prometheus renames them: dots become `_`, counters get `_total`,
+  the unit becomes a suffix, histograms expose `_bucket`/`_sum`/`_count`:
+  `orders.created` (counter) -> `orders_created_total`; `orders.processing.duration` (histogram, `s`) -> `orders_processing_duration_seconds_bucket`; attribute `order.kind` -> label `order_kind`.
+* **Attributes must be bounded**: a handful of fixed values (`kind`, `status`, `channel`). Never IDs, emails, raw URLs, free text or error messages
+  (every distinct value is a new time series that stays for 10 days; keep a metric under ~1000 series). Put such detail in span attributes or logs.
+* Count and time things the business cares about; do not re-measure what is already there (HTTP, database, runtime, notifications, span timings).
+* After the first export (30 s) the metric is listed in the org's **Custom metrics** dashboard, which also plots any metric you pick.
+
+**Your own dashboards** live in the project repo as JSON, in `deploy/grafana/*.json` (committed, one concern per file, named for its purpose: `orders.json`):
+
+1. Start from `deploy/grafana/_example.json` (files starting with `_` are templates and are never imported). Copy it, rename it, replace the example metrics with yours.
+   You can also build a dashboard in Grafana and export it (Share > Export > JSON, **without** "Export for sharing externally").
+2. Rules: reference data sources only as `{"type": "prometheus", "uid": "prometheus"}` (the app's metrics, default), `{"type": "prometheus", "uid": "prometheus-infra"}`
+   (this project's containers and uptime probes) and `{"type": "tempo", "uid": "tempo"}` (its traces, TraceQL). Nothing else exists in the org. No `${DS_...}`
+   placeholders. **No project filter is needed** (the data sources return only this project). Do not link to dashboard uids (they are rewritten on import).
+3. PromQL on counters: `rate(x_total[5m])`; on histograms: `histogram_quantile(0.95, sum by (le) (rate(x_bucket[5m])))`; gauges: plain. Scrape/flush interval is 30 s.
+4. **Check before you hand over**: `python3 scripts/grafana-lint.py deploy/grafana` (Go projects: `make grafana-check`). It runs offline; fix every `ERROR`, read the `WARN` lines.
+5. **Publish**: the infra owner runs, in the infrastructure repo, `make project-dashboards-import PROJECT=<app> DIR=<path to this project>/deploy/grafana`
+   (it lints again, then pushes into the project's org; rerun after every change; removing a file removes its dashboard). If your instructions forbid running infra
+   scripts, stop at step 4 and tell the owner that command. Dashboards built by hand in the org's UI are fine too, but they are not versioned.
+6. Verify with the owner: the org's **Custom metrics** table must list the metric names the dashboard uses; a panel that stays empty almost always uses a wrong name
+   (see the naming rule above) or the metric has not been exported yet (it needs traffic that executes the code path).
 
 ### The edge: ArvanCloud CDN and the shared nginx
 
@@ -232,7 +269,8 @@ local use are `<app>.localhost` and `api.<app>.localhost`.
 - [ ] All settings from environment variables; `.env.example` lists names only; no secrets committed
 - [ ] PostgreSQL through `DATABASE_URL` without session state; migrations safe for transaction pooling
 - [ ] Redis keys prefixed with `REDIS_KEY_PREFIX` and given TTLs; anything cached is rebuildable and fails open; RabbitMQ queues durable, reconnects after failures
-- [ ] OTLP to the collector, no application-side sampling, W3C propagation, `http.server.request.duration` emitted
+- [ ] OTLP to the collector, no application-side sampling, W3C propagation, `http.server.request.duration` emitted, `service.namespace` = app name
+- [ ] Own metrics (if any): OTel meter, dotted names with units, bounded attributes; own dashboards in `deploy/grafana/*.json` pass `scripts/grafana-lint.py`
 - [ ] Retry/backoff when dependencies are unavailable; graceful stop on SIGTERM within `stop_grace_period`
 - [ ] `GET /healthz` exists and does not depend on external services
 - [ ] `ship.conf` present; images named `<app>-<service>`

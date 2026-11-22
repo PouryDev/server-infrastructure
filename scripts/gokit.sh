@@ -103,10 +103,13 @@ case "$cmd" in
     docker_go -v "$KIT:/kit:ro" -v "$dest:/project" -w /kit -- "$GO_IMAGE" \
       go run ./cmd/gokit new /project --name "$(basename "$dest")" --kit-src /kit \
       --go-image "$GO_IMAGE" --db-image "$DB_IMAGE" --lint-image "$LINT_IMAGE" --redis-image "$REDIS_IMAGE" "$@"
-    # Files the infrastructure repo owns: the deploy script and the integration contract.
+    # Files the infrastructure repo owns: the deploy script, the integration contract and the dashboard linter + example.
     mkdir -p "$dest/scripts"
     cp "$ROOT/scripts/ship.sh" "$dest/scripts/ship.sh"
     cp "$ROOT/docs/project-integration/AGENTS.md" "$dest/AGENTS.md"
+    cp "$ROOT/scripts/grafana-lint.py" "$dest/scripts/grafana-lint.py"
+    mkdir -p "$dest/deploy/grafana"
+    cp "$ROOT/docs/project-integration/grafana-example.json" "$dest/deploy/grafana/_example.json"
     [ -d "$dest/.git" ] || git -C "$dest" init -q 2>/dev/null || true
     echo "resolving dependencies (go mod tidy)..."
     docker_go -v "$dest:/src" -w /src -- "$GO_IMAGE" go mod tidy

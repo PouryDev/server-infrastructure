@@ -28,6 +28,9 @@ type Runner struct {
 	URL string
 	FS  fs.FS
 	Dir string // sub-directory of FS holding the .sql files; "" = the root
+	// Table is the goose version table. "" keeps goose's default ("goose_db_version"). A library that ships its own
+	// migrations (a module embedded in several projects) sets its own so its versions never mix with the host's.
+	Table string
 }
 
 // Status describes one migration.
@@ -96,21 +99,29 @@ func (r Runner) with(fn func(*goose.Provider) error) error {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
-	p, err := newProvider(db, fsys)
+	if r.Table != "" && !tableRe.MatchString(r.Table) {
+		return fmt.Errorf("migrate: table name %q must match %s", r.Table, tableRe)
+	}
+	p, err := newProvider(db, fsys, r.Table)
 	if err != nil {
 		return err
 	}
 	return fn(p)
 }
 
-func newProvider(db *sql.DB, fsys fs.FS) (*goose.Provider, error) {
-	// No session locker on purpose, see the package comment.
-	p, err := goose.NewProvider(goose.DialectPostgres, db, fsys)
+func newProvider(db *sql.DB, fsys fs.FS, table string) (*goose.Provider, error) {
+	var opts []goose.ProviderOption // no session locker on purpose, see the package comment
+	if table != "" {
+		opts = append(opts, goose.WithTableName(table))
+	}
+	p, err := goose.NewProvider(goose.DialectPostgres, db, fsys, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return p, nil
 }
+
+var tableRe = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 
 var nameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,60}$`)
 

@@ -24,11 +24,31 @@ single `make up` (`docker compose up -d`). Other projects join the `infra` Docke
 | tempo | grafana/tempo:3.1.1 | 384 MB | single binary, local disk, 72 h retention |
 | prometheus | prom/prometheus:v3.15.1 | 512 MB | 10 d / 6 GB retention, OTLP receiver, 42 alert rules |
 | alertmanager | prom/alertmanager | 64 MB | **no receiver configured yet** (see below) |
-| grafana | grafana/grafana:13.2.5 | 384 MB | 6 provisioned dashboards, `127.0.0.1:3000` |
+| grafana | grafana/grafana:13.2.5 | 384 MB | 7 provisioned dashboards + one per project, `127.0.0.1:3000` |
 | exporters | node, cAdvisor, postgres, redis, nginx, blackbox | ~450 MB total | |
 
 Caps add up to ~4.7 GB, but idle usage measured on a test run is only ~0.65 GB; the caps are ceilings,
 not reservations. Budget: infra <= ~3.5 GB under load, leaving ~4 GB for projects.
+
+## Infrastructure manager (`manager/`)
+
+Standalone React/TypeScript + Go project with its own Makefile and clean-architecture
+boundaries. It discovers shared-network projects, reports live Docker resources and
+attributable shared-service metrics, and supports reversible suspension/expiration,
+renewal, automatic reconciliation and a durable audit log. Initialize private
+credentials with `python3 scripts/manager-credentials.py`, then `make manager-up`;
+`make up` also builds and starts it alongside the shared stack. No credential is
+printed. `make -C manager check` validates both applications; see
+[`manager/README.md`](manager/README.md) for lifecycle semantics, security and metric limits.
+
+## Shared VPN client (Xray)
+
+Manager's **اتصال VPN** page imports a single V2Ray/Xray connection link and can
+activate, disable and test it. Services opt in through `HTTP_PROXY` / `HTTPS_PROXY`
+(`http://xray:10809`) or `ALL_PROXY` (`socks5h://xray:10808`) on the `infra` network;
+set `NO_PROXY` for internal services. The host has loopback-only proxy ports 10809
+and 10808. Configuration persists in `infra_xray-data`. See the [VPN setup and
+supported links](manager/README.md#shared-outbound-vpn-client-xray).
 
 ## Go kit (`gokit/`)
 
@@ -39,6 +59,29 @@ graceful shutdown. `make new-go-project` generates a clean-architecture project 
 it (Makefile, Dockerfile, dev and deploy compose files, tests, an architecture test that enforces the layer rules).
 **Go never runs on the host**: every command goes through Docker, with the module cache in the shared volume
 `gokit-cache`. See `gokit/README.md`.
+
+## mizan host (`mizan-host/`)
+
+A standalone host application whose only job is to run `mizan` behind **real authentication** (gokit JWT, argon2id, users table, roles `finance` / `admin` / `user`,
+login lock after 5 failures) and to serve `mizan-ui` on the same origin. `make mizan-host-up` -> http://localhost:8090 (first run creates user `admin` with a random
+password printed once); `make mizan-host-user-create USERNAME=... ROLE=finance`; `make mizan-host-check`, `make mizan-host-integration`. mizan routes: `/v1/...` and the alias
+`/accounting/...`. See `mizan-host/README.md`.
+
+## Accounting UI (`mizan-ui/`)
+
+The web UI of `mizan/` for accountants (React + TypeScript, RTL, Vazirmatn). `make mizan-ui-up` starts PostgreSQL 18, the mizan API (migrations, Iranian chart,
+sample data) and the UI at http://localhost:5173, all in Docker; `make mizan-ui-check` runs typecheck, lint, tests and the build. The sign-in is a dev-only stand-in
+(`mizan/cmd/mizan-dev`: httpOnly-cookie JWT, same origin). See `mizan-ui/README.md`.
+
+## Laravel kit (`laravelkit/`)
+
+The Laravel twin of `gokit/`, for the Laravel projects that already exist: a Composer package that you install into a
+project with `make laravelkit-install` (it vendors the kit into the project's `.laravelkit/`). It uses what Laravel
+already gives (Eloquent, cache, queue, mail, HTTP client, `retry`) and adds only what repeats: the same JSON error body
+and `{items, meta}` list shape as the Go services, filtering / sorting / pagination with allow and deny lists, stateless
+(optionally revocable) JWT that Go and Laravel services can verify for each other, the shared-Redis cache contract,
+OpenTelemetry, SMS + email with sync and async drivers. **PHP never runs on the host**: every command goes through Docker.
+See `laravelkit/README.md`.
 
 ## Makefile
 
@@ -61,8 +104,13 @@ and show what they will run before doing anything destructive. A value can be pa
 | `make update-arvan-ips` | refresh CDN ranges (real-IP config + firewall list) and reload nginx |
 | `make firewall` *asks* | CDN-only HTTP port: dry run / apply / remove |
 | `make prometheus-reload` | reload Prometheus config and rules |
-| `make dashboards` | regenerate the Grafana dashboards |
+| `make dashboards` | regenerate the Grafana dashboards (incl. the Project overview template) |
+| `make project-dashboards` | per-project Grafana org with filtered data sources and a full dashboard set: all projects Prometheus has seen, or `PROJECTS="a b"` |
+| `make project-access` | (re)create a project's org and push its dashboards; `LOGIN=someone` adds a login that sees only that org |
+| `make agents-sync` | rebuild the skill from AGENTS.md; `PROJECTS="dir ..."` also copies AGENTS.md, the dashboard linter and an example into projects |
+| `make project-dashboards-import` | add a project's own dashboard JSON to its folder: `PROJECT=x DIR=path` |
 | `make new-go-project` *asks* | scaffold a Go project (clean architecture) that uses `gokit/`; also `gokit-check`, `gokit-integration`, `gokit-bench`, `gokit-bench-db`, `gokit-sync`, `gokit-jwt-key` |
+| `make laravelkit-install` *asks* | install the Laravel kit into an existing Laravel project; also `laravelkit-sync`, `laravelkit-check`, `laravelkit-test`, `laravelkit-integration`, `laravelkit-fmt`, `laravelkit-jwt-key` |
 | `make psql` *asks* / `redis-cli` | shell on the shared Postgres / Redis |
 | `make tunnel` *asks* | SSH tunnel to Grafana, Prometheus, Alertmanager, RabbitMQ and Postgres |
 
@@ -123,14 +171,36 @@ deploys over SSH with automatic rollback. The project needs a `ship.conf` (forma
 
 **Give the project's developers (and any assistant working on it) `docs/project-integration/AGENTS.md`**: copy it to the project root. It describes only how a
 project connects to this infrastructure, not how to build the project. `docs/project-integration/skill/server-infra/` is the same content packaged as an
-installable skill, for tooling that supports skills.
+installable skill, for tooling that supports skills. After editing `AGENTS.md` run `make agents-sync` (rebuilds the skill) or
+`make agents-sync PROJECTS="~/p/a ~/p/b"` to also copy `AGENTS.md`, `scripts/grafana-lint.py` and `deploy/grafana/_example.json` into projects.
+`scripts/grafana-lint.py` checks a project's own dashboards offline; the section "Dashboards and your own metrics" of `AGENTS.md` is the contract for them.
 
 ## Monitoring and alerting
 
 * After editing alert rules or `prometheus.yml`: `make prometheus-reload`. Dashboards are provisioned from `config/grafana/dashboards/` (re-read every 60 s).
 * Grafana folder **Infrastructure**: Server, Containers, PostgreSQL, Redis & RabbitMQ, Edge & uptime, Applications (OTel RED metrics per service).
-  Dashboards are generated by `scripts/gen-dashboards.py` (grafana.com is not reachable from every network, so nothing is downloaded).
-* Traces: Grafana -> Explore -> Tempo. Services appear by `service.name`.
+* **Projects**: every project has its **own Grafana org** (switch org in Grafana's profile menu; admins see all) with a generated set:
+  Overview, HTTP API, Database, Notifications, Go runtime, Containers & uptime, **Traces & latency** and Custom metrics (lists the project's own metrics and plots the ones you
+  pick). `make project-dashboards` builds them for every project Prometheus has seen (or `PROJECTS="a b"`). A project is the `service.namespace`
+  resource attribute (`telemetry.Config.Project`, set by `gokit new`; `new-project.sh` sets it through `OTEL_RESOURCE_ATTRIBUTES`);
+  Prometheus turns it into `job="<project>/<service>"`.
+  * **Isolation is enforced on the data**, not in the dashboards: the org's only data sources go through `label-proxy-job` / `label-proxy-project`
+    (prom-label-proxy) with a secret per-org header, and the proxy ANDs `job=~"<project>/.*"` (apps) or `project="<project>"` (containers, uptime probes;
+    `project` is relabelled from the compose project in `prometheus.yml`) into every query and label API. A hand-written query in Explore cannot read another
+    project. Members cannot edit or add data sources (org Editor, not Admin). There is no log backend.
+  * **Traces**: Tempo is multi-tenant. The collector routes every span to the tenant named like its `service.namespace` (`config/otel/tenants.yaml`, written by
+    `scripts/project-access.py`, collector restarted when it changes) and each project org's `tempo` source sends that tenant, so a project sees only its own traces.
+    *Traces & latency* shows how long every request takes (span metrics computed from ALL spans before sampling: exact, isolated like any metric), which
+    operations (db, outbound calls) take the time, and the traces (Tempo keeps every error, every slow trace and `TRACE_SAMPLE_PERCENT` of the rest). Spans of a
+    project with no route yet land in tenant `single-tenant` (data source `Tempo (spans without a project)`); admins read all tenants with `Tempo (all projects)`.
+  * **Finding the orgs**: the admin's home dashboard (org 1) is **Projects**, with links that open each project's org.
+  * **Own dashboards**: build them in the org in the Grafana UI (never touched by the scripts), or keep JSON in the project's `deploy/grafana/` and run
+    `make project-dashboards-import PROJECT=x DIR=path` (files become `custom-*.json`). The generated ones are overwritten on every run: "Save as" to keep a variant.
+  * **Logins**: `make project-access PROJECT=x LOGIN=someone` creates an Editor that belongs to that org only (password printed once);
+    `scripts/project-access.py x --remove` deletes the org. Add a project later: `make project-dashboards PROJECTS=x`.
+  * *Project overview* (org 1, folder Infrastructure) is the admin's all-projects view with a Project and Service picker.
+  Dashboards are generated by `scripts/gen-dashboards.py` and `scripts/project-dashboards.py` (both use `scripts/dashlib.py`) (grafana.com is not reachable from every network, so nothing is downloaded).
+* Traces: Grafana -> Explore -> *Tempo (all projects)* (admin) or the project org's *Traces & latency* dashboard. Services appear by `service.name`; tenants by `service.namespace`.
 * 42 alert rules in `config/prometheus/rules/` (host CPU/RAM/swap/disk incl. fill prediction, OOM kills, containers, Postgres, Redis, RabbitMQ,
   nginx, external probes, pipeline health).
 * **Notifications are not wired yet**: pick a channel in `config/alertmanager/alertmanager.yml` (Telegram example is there) and
@@ -173,7 +243,13 @@ Docker network (they can reach each other's containers by name; authentication i
 compose.yaml            all services, networks, limits
 config/                 per-service configuration (postgres, redis, rabbitmq, nginx, otel, tempo, prometheus + rules, alertmanager, grafana, blackbox, firewall)
 Makefile                shortcuts for everything below; interactive where input is needed (`make help`)
-scripts/                init-host, new-project, ship, update-arvan-ips, firewall, gen-dashboards, lib-prompt (used by the Makefile)
+scripts/                init-host, new-project, ship, update-arvan-ips, firewall, gen-dashboards, project-dashboards, project-access, dashlib, lib-prompt (used by the Makefile)
 host/                   sysctl, THP, docker daemon.json, firewall unit
 docs/project-integration/   AGENTS.md + skill for the projects that deploy here
 ```
+
+## Storefront product and manager launcher
+
+`storefront/` adds a Go SSR store product generated with `make new-go-project`. In the manager, **فروشگاه‌ساز** creates isolated instances on the current local/server host, with twenty design presets, mobile-only authentication, optional modules and separate customer/seller/developer access. `http://shoptest.localhost` is the local demo. See [storefront/README.md](storefront/README.md) for credentials, provider integration evidence and operating boundaries.
+
+Commands: `make storefront-check`, `make storefront-integration`, `make storefront-smoke`, `make storefront-image`, `make storefront-create` (JSON stdin), and `make storefront-release NAME=shop IMAGE=storefront-api:tag`. Build/start the launcher using `make manager-up`. No accounting/Mizan module is used.

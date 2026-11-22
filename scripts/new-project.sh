@@ -14,6 +14,7 @@
 #   - RabbitMQ vhost + user (+ connection/queue limits)
 #   - nginx server blocks in config/nginx/conf.d/<name>.conf (tested, then reloaded)
 #   - an uptime probe for each public domain
+#   - a Grafana org for the project (own filtered data sources, full dashboard set)
 #   - $APPS_DIR/<name>/.env  with every connection string the project needs
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -135,6 +136,11 @@ if [ -n "$CLIENT_DOMAIN$API_DOMAIN" ]; then
   [ -z "$API_DOMAIN" ]    || printf -- '- targets: ["https://%s/healthz"]\n  labels: { project: %s, kind: api }\n' "$API_DOMAIN" "$NAME" >> "$PROBES"
   [ -z "$API_PATH" ]      || printf -- '- targets: ["https://%s%s/healthz"]\n  labels: { project: %s, kind: api }\n' "$CLIENT_DOMAIN" "$API_PATH" "$NAME" >> "$PROBES"
 fi
+
+echo "==> grafana org + dashboards for the project (data isolated by label proxy)"
+python3 scripts/project-dashboards.py "$NAME" >/dev/null 2>&1 && python3 scripts/project-access.py "$NAME" \
+  || echo "   skipped (python3 missing or Grafana down?): run 'make project-dashboards PROJECTS=$NAME' later"
+echo "   a login that sees only this project: make project-access PROJECT=$NAME LOGIN=someone"
 
 cat <<DONE
 

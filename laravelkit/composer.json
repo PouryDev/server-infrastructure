@@ -1,0 +1,54 @@
+{
+    "name": "pourydev/laravelkit",
+    "description": "Shared Laravel kit: uniform errors, filtering/sorting/pagination, stateless JWT, Redis cache contract, OpenTelemetry, notifications. The Laravel twin of gokit.",
+    "type": "library",
+    "license": "proprietary",
+    "require": {
+        "php": "^8.2",
+        "ext-json": "*",
+        "firebase/php-jwt": "^6.10|^7.0",
+        "illuminate/cache": "^11.0|^12.0|^13.0",
+        "illuminate/console": "^11.0|^12.0|^13.0",
+        "illuminate/contracts": "^11.0|^12.0|^13.0",
+        "illuminate/database": "^11.0|^12.0|^13.0",
+        "illuminate/http": "^11.0|^12.0|^13.0",
+        "illuminate/queue": "^11.0|^12.0|^13.0",
+        "illuminate/redis": "^11.0|^12.0|^13.0",
+        "illuminate/routing": "^11.0|^12.0|^13.0",
+        "illuminate/support": "^11.0|^12.0|^13.0"
+    },
+    "require-dev": {
+        "google/protobuf": "^5.36",
+        "guzzlehttp/guzzle": "^8.3",
+        "laravel/pint": "^1.13",
+        "open-telemetry/api": "^1.0",
+        "open-telemetry/exporter-otlp": "^1.5",
+        "open-telemetry/sdk": "^1.0",
+        "orchestra/testbench": "^9.0|^10.0|^11.0",
+        "phpunit/phpunit": "^10.5|^11.0|^12.0",
+        "predis/predis": "^3.7"
+    },
+    "suggest": {
+        "ext-sodium": "Needed for EdDSA (Ed25519) JWT keys",
+        "ext-redis": "phpredis, the fastest Redis client (predis also works)",
+        "open-telemetry/api": "Tracing and metrics (with sdk + exporter-otlp)",
+        "open-telemetry/sdk": "Tracing and metrics (with api + exporter-otlp)",
+        "open-telemetry/exporter-otlp": "Sends traces and metrics to the collector",
+        "guzzlehttp/guzzle": "HTTP client for the OTLP exporter and for SMS providers",
+        "google/protobuf": "Needed by the OTLP exporter"
+    },
+    "autoload": {
+        "psr-4": { "PouryDev\\LaravelKit\\": "src/" }
+    },
+    "autoload-dev": {
+        "psr-4": { "PouryDev\\LaravelKit\\Tests\\": "tests/" }
+    },
+    "extra": {
+        "laravel": {
+            "providers": ["PouryDev\\LaravelKit\\LaravelKitServiceProvider"]
+        }
+    },
+    "config": { "sort-packages": true, "allow-plugins": { "php-http/discovery": true } },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

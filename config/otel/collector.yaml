@@ -1,6 +1,9 @@
 # Single entry point for telemetry from every project: otel-collector:4317 (gRPC) / :4318 (HTTP).
-#   traces  -> tail sampling -> Tempo
+#   traces  -> span metrics (ALL spans, before sampling) -> Prometheus
+#           -> tail sampling -> routed by service.namespace to that project's Tempo tenant
 #   metrics -> Prometheus (native OTLP receiver)
+# This file is static. Per-project tenants (routing table, one exporter + pipeline each) are in tenants.yaml, written by
+# scripts/project-access.py; both files are loaded (--config twice, maps are merged).
 #   logs    -> dropped (no log backend). Projects should log JSON to stdout and set OTEL_LOGS_EXPORTER=none.
 receivers:
   otlp:
@@ -35,10 +38,26 @@ processors:
     timeout: 5s
     send_batch_size: 1024
 
+connectors:
+  # RED metrics per span (calls, errors, duration histogram) computed from every span, so they are exact although
+  # Tempo only keeps sampled traces. Resource attributes (service.name/namespace) carry over, so Prometheus labels them
+  # job="<project>/<service>" and the per-project label proxy isolates them like any other metric.
+  spanmetrics:
+    namespace: traces.span.metrics
+    histogram:
+      explicit:
+        buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2500ms, 5s, 10s]
+    # span.name is "GET /route" for a matched request (just "GET" for a 404), so no route dimension is needed
+    dimensions:
+      - name: http.response.status_code
+    metrics_flush_interval: 30s
+  forward/sampling: {}
+
 exporters:
   otlp/tempo:
     endpoint: tempo:4317
     tls: { insecure: true }
+    headers: { X-Scope-OrgID: single-tenant }  # Tempo has multitenancy on: every write needs a tenant
   otlphttp/prometheus:
     endpoint: http://prometheus:9090/api/v1/otlp
   nop:
@@ -53,12 +72,20 @@ service:
             exporter:
               prometheus: { host: 0.0.0.0, port: 8888 }
   pipelines:
-    traces:
+    traces/in:
       receivers: [otlp]
-      processors: [memory_limiter, tail_sampling, batch]
+      processors: [memory_limiter]
+      exporters: [spanmetrics, forward/sampling]
+    traces/sampled:
+      receivers: [forward/sampling]
+      processors: [tail_sampling, batch]
+      exporters: [routing/tenant]
+    # spans of a namespace without a route of its own (a new project before project-access.py ran): tenant "single-tenant"
+    traces/tenant-default:
+      receivers: [routing/tenant]
       exporters: [otlp/tempo]
     metrics:
-      receivers: [otlp]
+      receivers: [otlp, spanmetrics]
       processors: [memory_limiter, batch]
       exporters: [otlphttp/prometheus]
     logs:

@@ -1,0 +1,58 @@
+# Local stack that runs the BUILT image (the same one `make image` produces): PostgreSQL 18, a one-shot migration
+# and the host application, which also serves the accounting UI. Started by scripts/mizan-host.sh (from the
+# infrastructure repo) or by `make stack-up`. Hot reload for development is compose.dev.yaml instead.
+name: mizan-host
+
+services:
+  db:
+    image: ${DB_IMAGE:-docker.arvancloud.ir/postgres:18.6-alpine}
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+      POSTGRES_DB: app
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:                              # one-shot: host schema, then mizan's
+    image: mizan-host-api:${TAG:-local}
+    entrypoint: ["/migrate"]
+    command: ["up"]
+    environment: &app-env
+      DATABASE_URL: postgres://app:${POSTGRES_PASSWORD:-app}@db:5432/app?sslmode=disable
+    depends_on:
+      db: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    image: mizan-host-api:${TAG:-local}
+    env_file: [.env]
+    environment:
+      <<: *app-env
+      APP_ENV: production
+      LOG_FORMAT: text
+      REDIS_URL: ""                     # stateless tokens: logout drops the cookies; set REDIS_URL to revoke tokens too
+      WEB_DIR: /web
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}   # false only because the local stack is plain http
+      COMPANY_NAME: ${COMPANY_NAME:-شرکت نمونه}
+    ports:
+      - "127.0.0.1:${HOST_PORT:-8090}:8080"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "/api", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  pgdata:

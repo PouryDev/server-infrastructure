@@ -23,6 +23,7 @@ internal/bootstrap composition root: the only place that wires concrete types to
 internal/config    environment variables -> typed Config
 migrations         goose SQL files, embedded in the migrate binary
 deploy/compose.yaml  production compose file for the shared infrastructure (used by scripts/ship.sh)
+deploy/grafana/      the project's own Grafana dashboards and how its metrics reach them (see its README)
 ```
 
 Add a feature by growing the layers from the inside: entity + repository interface in `domain`, the rule in

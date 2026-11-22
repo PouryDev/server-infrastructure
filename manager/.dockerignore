@@ -1,0 +1,12 @@
+.env
+ssh
+*.db*
+bin
+web/node_modules
+.git
+
+resource-ssh
+builder.local.yaml
+resources.local.yaml
+runtime-limits.local.yaml
+last-update-backup

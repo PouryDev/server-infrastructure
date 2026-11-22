@@ -4,76 +4,11 @@
 grafana.com (community dashboards) is not reachable from every network, so the dashboards are
 generated from PromQL here instead. Only the metrics exposed by this stack's own exporters are used.
 """
-import json
 import pathlib
+import sys
 
-OUT = pathlib.Path(__file__).resolve().parent.parent / "config/grafana/dashboards"
-DS = {"type": "prometheus", "uid": "prometheus"}
-
-
-class Board:
-    def __init__(self, uid, title, tags):
-        self.uid, self.title, self.tags = uid, title, tags
-        self.panels, self.x, self.y, self.rowh, self.pid = [], 0, 0, 0, 0
-
-    def _place(self, w, h):
-        if self.x + w > 24:
-            self.x, self.y, self.rowh = 0, self.y + self.rowh, 0
-        pos = {"x": self.x, "y": self.y, "w": w, "h": h}
-        self.x += w
-        self.rowh = max(self.rowh, h)
-        return pos
-
-    def _base(self, kind, title, w, h, targets, unit, desc):
-        self.pid += 1
-        return {
-            "id": self.pid, "type": kind, "title": title, "description": desc, "datasource": DS,
-            "gridPos": self._place(w, h),
-            "targets": [
-                {"refId": chr(65 + i), "datasource": DS, "expr": e, "legendFormat": legend}
-                for i, (e, legend) in enumerate(targets)
-            ],
-            "fieldConfig": {"defaults": {"unit": unit}, "overrides": []},
-        }
-
-    def row(self, title):
-        self.x, self.y, self.rowh = 0, self.y + self.rowh, 0
-        self.pid += 1
-        self.panels.append({"id": self.pid, "type": "row", "title": title, "collapsed": False,
-                            "gridPos": {"x": 0, "y": self.y, "w": 24, "h": 1}, "panels": []})
-        self.y += 1
-        self.rowh = 0
-
-    def ts(self, title, targets, unit="short", w=8, h=7, desc="", stack=False, minv=None, maxv=None):
-        p = self._base("timeseries", title, w, h, targets, unit, desc)
-        c = {"fillOpacity": 25 if stack else 8, "lineWidth": 1, "showPoints": "never"}
-        if stack:
-            c["stacking"] = {"mode": "normal", "group": "A"}
-        p["fieldConfig"]["defaults"]["custom"] = c
-        if minv is not None:
-            p["fieldConfig"]["defaults"]["min"] = minv
-        if maxv is not None:
-            p["fieldConfig"]["defaults"]["max"] = maxv
-        p["options"] = {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}}
-        self.panels.append(p)
-
-    def stat(self, title, expr, unit="short", w=4, h=4, desc="", steps=None, mappings=None):
-        p = self._base("stat", title, w, h, [(expr, "")], unit, desc)
-        d = p["fieldConfig"]["defaults"]
-        d["thresholds"] = {"mode": "absolute", "steps": steps or [{"color": "green", "value": None}]}
-        if mappings:
-            d["mappings"] = mappings
-        p["options"] = {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "none"}
-        self.panels.append(p)
-
-    def save(self, filename):
-        board = {
-            "uid": self.uid, "title": self.title, "tags": self.tags + ["infrastructure"], "schemaVersion": 39,
-            "version": 1, "editable": False, "refresh": "30s", "time": {"from": "now-6h", "to": "now"},
-            "timezone": "browser", "panels": self.panels, "templating": {"list": []}, "annotations": {"list": []},
-        }
-        (OUT / filename).write_text(json.dumps(board, indent=1) + "\n")
-
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from dashlib import Board, OUT, project_board  # noqa: E402
 
 OK_DOWN = [{"type": "value", "options": {"0": {"text": "DOWN"}, "1": {"text": "UP"}}}]
 GREEN_RED = [{"color": "red", "value": None}, {"color": "green", "value": 1}]
@@ -222,5 +157,9 @@ b.ts("Spans accepted / sent / refused", [("sum(rate(otelcol_receiver_accepted_sp
 b.ts("Metric points accepted / refused", [("sum(rate(otelcol_receiver_accepted_metric_points[5m]))", "accepted"), ("sum(rate(otelcol_receiver_refused_metric_points[5m]))", "refused")], w=8)
 b.ts("Collector & Tempo memory", [('container_memory_working_set_bytes{name=~".*otel-collector.*"}', "collector"), ('container_memory_working_set_bytes{name=~".*tempo.*"}', "tempo")], "bytes", w=8)
 b.save("applications.json")
+
+# ---------------------------------------------------------------- project overview (template, $project picker)
+b, variables = project_board()
+b.save("project.json", variables=variables)
 
 print("wrote", len(list(OUT.glob("*.json"))), "dashboards to", OUT)

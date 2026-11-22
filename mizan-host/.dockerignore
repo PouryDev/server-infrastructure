@@ -1,0 +1,7 @@
+.git
+.env
+tmp/
+bin/
+*.md
+compose.dev.yaml
+deploy/

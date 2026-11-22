@@ -32,7 +32,7 @@ NAME ?=
 
 .PHONY: help init prepare up down restart logs ps psql shell \
         migrate-up migrate-down migrate-status migrate-diff migrate-drift migrate-new \
-        test test-integration vet fmt fmt-check lint check tidy vendor build image ship clean
+        test test-integration vet fmt fmt-check lint grafana-check check tidy vendor build image ship clean
 
 help: ## Show this help
 	@awk 'BEGIN{FS=":.*## "} /^##@/{printf "\n\033[1m%s\033[0m\n", substr($$0,5)} /^[a-zA-Z_-]+:.*## /{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -123,6 +123,9 @@ lint: prepare ## golangci-lint
 	  -e HOME=/tmp -e GOCACHE=/go/.buildcache -e GOLANGCI_LINT_CACHE=/go/.lintcache -e CGO_ENABLED=0 \
 	  $${GOPROXY:+-e GOPROXY} $${GOSUMDB:+-e GOSUMDB} $${GOFLAGS:+-e GOFLAGS} \
 	  $(LINT_IMAGE) golangci-lint run ./...
+
+grafana-check: ## Lint the project's own Grafana dashboards (deploy/grafana/*.json); see deploy/grafana/README.md
+	@python3 scripts/grafana-lint.py deploy/grafana
 
 check: fmt-check vet lint test ## Everything CI would run
 
